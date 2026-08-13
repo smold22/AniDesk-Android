@@ -2,6 +2,7 @@ package ru.anidesk.app.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -26,6 +27,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material3.Button
@@ -54,11 +56,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
+import android.content.ClipData
+import android.widget.Toast
+import androidx.compose.ui.platform.ClipEntry
 import kotlinx.coroutines.launch
 import ru.anidesk.app.core.network.AnixartApi
 import ru.anidesk.app.core.network.Dubber
@@ -335,11 +342,26 @@ fun ReleaseScreen(
 
 @Composable
 private fun ReleaseHeader(r: Release, onBack: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(16.dp),
-    ) {
+    val context = LocalContext.current
+    val clipboard = LocalClipboard.current
+    val scope = rememberCoroutineScope()
+    var titleExpanded by remember { mutableStateOf(false) }
+
+    Column {
+        Icon(
+            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+            contentDescription = "Назад",
+            tint = MainText,
+            modifier = Modifier
+                .padding(start = 12.dp, top = 4.dp)
+                .clickable(onClick = onBack)
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+        ) {
         AsyncImage(
             model = r.image,
             contentDescription = r.titleRu,
@@ -356,12 +378,40 @@ private fun ReleaseHeader(r: Release, onBack: () -> Unit) {
                 fontSize = 20.sp,
                 fontWeight = FontWeight.Bold,
                 lineHeight = 24.sp,
-                maxLines = 3,
+                maxLines = if (titleExpanded) Int.MAX_VALUE else 3,
                 overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .combinedClickable(
+                        onClick = { titleExpanded = !titleExpanded },
+                        onLongClick = {
+                            scope.launch {
+                                clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("title", r.titleRu)))
+                                Toast.makeText(context, "Название скопировано", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                    ),
             )
             Spacer(Modifier.height(4.dp))
             if (r.titleOriginal.isNotEmpty()) {
-                Text(r.titleOriginal, fontSize = 14.sp, color = SecondaryText, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(
+                    r.titleOriginal,
+                    fontSize = 14.sp,
+                    color = SecondaryText,
+                    maxLines = if (titleExpanded) Int.MAX_VALUE else 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .combinedClickable(
+                            onClick = { titleExpanded = !titleExpanded },
+                            onLongClick = {
+                                scope.launch {
+                                    clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("title_original", r.titleOriginal)))
+                                    Toast.makeText(context, "Оригинальное название скопировано", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                        ),
+                )
             }
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -397,6 +447,7 @@ private fun ReleaseHeader(r: Release, onBack: () -> Unit) {
                 fontSize = 13.sp,
                 color = SecondaryText,
             )
+        }
         }
     }
 }

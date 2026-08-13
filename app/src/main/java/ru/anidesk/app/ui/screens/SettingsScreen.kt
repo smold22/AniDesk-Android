@@ -86,11 +86,11 @@ private val REWIND_OPTIONS = listOf(
 )
 
 @Composable
-fun SettingsScreen(settingsStore: SettingsStore) {
+fun SettingsScreen(settingsStore: SettingsStore, onBack: () -> Unit) {
     var screen by remember { mutableIntStateOf(0) }
 
     when (screen) {
-        0 -> SettingsMain(settingsStore, onOpen = { screen = it })
+        0 -> SettingsMain(settingsStore, onBack = onBack, onOpen = { screen = it })
         1 -> PlaybackSettings(settingsStore, onBack = { screen = 0 })
         2 -> AppearanceSettings(settingsStore, onBack = { screen = 0 })
         3 -> DataSettings(onBack = { screen = 0 })
@@ -101,7 +101,7 @@ fun SettingsScreen(settingsStore: SettingsStore) {
 // ---------- Главный экран ----------
 
 @Composable
-private fun SettingsMain(settingsStore: SettingsStore, onOpen: (Int) -> Unit) {
+private fun SettingsMain(settingsStore: SettingsStore, onBack: () -> Unit, onOpen: (Int) -> Unit) {
     val scope = rememberCoroutineScope()
     var theme by remember { mutableIntStateOf(0) }
     var showThemeDialog by remember { mutableStateOf(false) }
@@ -119,7 +119,7 @@ private fun SettingsMain(settingsStore: SettingsStore, onOpen: (Int) -> Unit) {
             .background(MaterialTheme.colorScheme.background)
             .windowInsetsPadding(WindowInsets.statusBars),
     ) {
-        ScreenTitle("Настройки")
+        ScreenTitle("Настройки", onBack = onBack)
         HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant, thickness = 1.dp)
 
         Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
@@ -481,14 +481,32 @@ private fun AboutSettings(onBack: () -> Unit) {
 // ---------- Общие элементы ----------
 
 @Composable
-private fun ScreenTitle(title: String) {
-    Text(
-        text = title,
-        fontSize = 20.sp,
-        fontWeight = FontWeight.Bold,
-        color = MainText,
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-    )
+private fun ScreenTitle(title: String, onBack: (() -> Unit)? = null) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (onBack != null) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = "Назад",
+                tint = MainText,
+                modifier = Modifier
+                    .clickable(onClick = onBack)
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+            )
+        } else {
+            Spacer(Modifier.width(16.dp))
+        }
+        Text(
+            text = title,
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold,
+            color = MainText,
+        )
+    }
 }
 
 @Composable

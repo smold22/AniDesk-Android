@@ -123,16 +123,33 @@ fun MainShell(
                 )
             }
             composable("discover") {
-                DiscoverScreen(api = api, onOpenRelease = onOpenRelease)
+                DiscoverScreen(
+                    api = api,
+                    onOpenRelease = onOpenRelease,
+                    onBack = { navController.navigate("home") { launchSingleTop = true } },
+                )
             }
             composable("bookmarks") {
-                BookmarksScreen(api = api, settingsStore = settingsStore, onOpenRelease = onOpenRelease)
+                BookmarksScreen(
+                    api = api,
+                    settingsStore = settingsStore,
+                    onOpenRelease = onOpenRelease,
+                    onBack = { navController.navigate("home") { launchSingleTop = true } },
+                )
             }
             composable("settings") {
-                SettingsScreen(settingsStore = settingsStore)
+                SettingsScreen(
+                    settingsStore = settingsStore,
+                    onBack = { navController.navigate("home") { launchSingleTop = true } },
+                )
             }
             composable("profile") {
-                ProfileScreen(api = api, sessionStore = sessionStore, onOpenRelease = onOpenRelease)
+                ProfileScreen(
+                    api = api,
+                    sessionStore = sessionStore,
+                    onOpenRelease = onOpenRelease,
+                    onBack = { navController.navigate("home") { launchSingleTop = true } },
+                )
             }
         }
     }

@@ -25,6 +25,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -54,6 +55,7 @@ import ru.anidesk.app.core.network.SessionStore
 import ru.anidesk.app.ui.components.ErrorBox
 import ru.anidesk.app.ui.components.LoadingIndicator
 import ru.anidesk.app.ui.components.ReleaseCard
+import ru.anidesk.app.ui.components.TabHeader
 import ru.anidesk.app.ui.theme.AltBackground
 import ru.anidesk.app.ui.theme.Carmine
 import ru.anidesk.app.ui.theme.MainText
@@ -64,6 +66,7 @@ fun ProfileScreen(
     api: AnixartApi,
     sessionStore: SessionStore,
     onOpenRelease: (Int) -> Unit,
+    onBack: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     var profileId by remember { mutableStateOf<Int?>(null) }
@@ -127,6 +130,8 @@ fun ProfileScreen(
             .background(MaterialTheme.colorScheme.background)
             .windowInsetsPadding(WindowInsets.statusBars),
     ) {
+        TabHeader("Профиль", onBack)
+        HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant, thickness = 1.dp)
         when {
             loading -> LoadingIndicator()
             error != null -> ErrorBox(error!!)

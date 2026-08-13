@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -42,6 +43,7 @@ import ru.anidesk.app.core.network.Release
 import ru.anidesk.app.ui.components.ErrorBox
 import ru.anidesk.app.ui.components.LoadingIndicator
 import ru.anidesk.app.ui.components.ReleaseCard
+import ru.anidesk.app.ui.components.TabHeader
 import ru.anidesk.app.ui.theme.Carmine
 import ru.anidesk.app.ui.theme.MainText
 
@@ -49,6 +51,7 @@ import ru.anidesk.app.ui.theme.MainText
 fun DiscoverScreen(
     api: AnixartApi,
     onOpenRelease: (Int) -> Unit,
+    onBack: () -> Unit,
 ) {
     var watching by remember { mutableStateOf<List<Release>>(emptyList()) }
     var recommendations by remember { mutableStateOf<List<Release>>(emptyList()) }
@@ -99,6 +102,8 @@ fun DiscoverScreen(
             .background(MaterialTheme.colorScheme.background)
             .windowInsetsPadding(WindowInsets.statusBars),
     ) {
+        TabHeader("Смотрят", onBack)
+        HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant, thickness = 1.dp)
         when {
             loading -> LoadingIndicator()
             error != null -> ErrorBox(error!!)

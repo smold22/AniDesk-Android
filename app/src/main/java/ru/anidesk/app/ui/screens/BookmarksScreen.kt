@@ -49,6 +49,7 @@ import ru.anidesk.app.ui.components.ErrorBox
 import ru.anidesk.app.ui.components.LoadingIndicator
 import ru.anidesk.app.ui.components.ReleaseCard
 import ru.anidesk.app.ui.components.ReleaseListItem
+import ru.anidesk.app.ui.components.TabHeader
 import ru.anidesk.app.ui.theme.AltBackground
 import ru.anidesk.app.ui.theme.Carmine
 import ru.anidesk.app.ui.theme.ThirdText
@@ -66,6 +67,7 @@ fun BookmarksScreen(
     api: AnixartApi,
     settingsStore: ru.anidesk.app.core.settings.SettingsStore,
     onOpenRelease: (Int) -> Unit,
+    onBack: () -> Unit,
 ) {
     var typeIndex by remember { mutableIntStateOf(0) }
     var releases by remember { mutableStateOf<List<Release>>(emptyList()) }
@@ -102,6 +104,7 @@ fun BookmarksScreen(
             .background(MaterialTheme.colorScheme.background)
             .windowInsetsPadding(WindowInsets.statusBars),
     ) {
+        TabHeader("Закладки", onBack)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
