@@ -4,17 +4,22 @@ import android.app.Application
 import coil3.ImageLoader
 import coil3.SingletonImageLoader
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 import ru.anidesk.app.core.network.AnixartApi
 import ru.anidesk.app.core.network.SessionStore
 import ru.anidesk.app.core.settings.SettingsStore
 
 class AniDeskApplication : Application() {
 
-    val api: AnixartApi by lazy { AnixartApi() }
+    val settingsStore: SettingsStore by lazy { SettingsStore(this) }
+
+    val api: AnixartApi by lazy {
+        val host = runBlocking { settingsStore.apiEndpoint.first() }
+        AnixartApi(SettingsStore.apiBaseUrl(host))
+    }
 
     val sessionStore: SessionStore by lazy { SessionStore(this) }
-
-    val settingsStore: SettingsStore by lazy { SettingsStore(this) }
 
     override fun onCreate() {
         super.onCreate()

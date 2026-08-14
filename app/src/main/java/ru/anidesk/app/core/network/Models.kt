@@ -12,6 +12,20 @@ data class LoginResponse(
 )
 
 @Serializable
+data class SignUpResponse(
+    @SerialName("code") val code: Int = 0,
+    @SerialName("hash") val hash: String = "",
+    @SerialName("codeTimestampExpires") val codeTimestampExpires: Long = 0,
+)
+
+@Serializable
+data class VerifyResponse(
+    @SerialName("code") val code: Int = 0,
+    @SerialName("profile") val profile: Profile? = null,
+    @SerialName("profileToken") val profileToken: ProfileToken? = null,
+)
+
+@Serializable
 data class ProfileToken(
     @SerialName("id") val id: String = "",
     @SerialName("token") val token: String = "",

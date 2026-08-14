@@ -52,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import ru.anidesk.app.core.network.AnixartApi
 import ru.anidesk.app.core.settings.SettingsStore
 import ru.anidesk.app.ui.theme.Carmine
 import ru.anidesk.app.ui.theme.MainText
@@ -86,14 +87,14 @@ private val REWIND_OPTIONS = listOf(
 )
 
 @Composable
-fun SettingsScreen(settingsStore: SettingsStore, onBack: () -> Unit) {
+fun SettingsScreen(api: AnixartApi, settingsStore: SettingsStore, onBack: () -> Unit) {
     var screen by remember { mutableIntStateOf(0) }
 
     when (screen) {
         0 -> SettingsMain(settingsStore, onBack = onBack, onOpen = { screen = it })
         1 -> PlaybackSettings(settingsStore, onBack = { screen = 0 })
         2 -> AppearanceSettings(settingsStore, onBack = { screen = 0 })
-        3 -> DataSettings(onBack = { screen = 0 })
+        3 -> DataSettings(api, settingsStore, onBack = { screen = 0 })
         else -> AboutSettings(onBack = { screen = 0 })
     }
 }
@@ -416,10 +417,16 @@ private fun AppearanceSettings(settingsStore: SettingsStore, onBack: () -> Unit)
 // ---------- Данные ----------
 
 @Composable
-private fun DataSettings(onBack: () -> Unit) {
+private fun DataSettings(api: AnixartApi, settingsStore: SettingsStore, onBack: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var cacheCleared by remember { mutableStateOf(false) }
+    var apiEndpoint by remember { mutableStateOf(SettingsStore.DEFAULT_API_ENDPOINT) }
+    var showApiDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        apiEndpoint = settingsStore.apiEndpoint.first()
+    }
 
     Column(
         modifier = Modifier
@@ -431,6 +438,13 @@ private fun DataSettings(onBack: () -> Unit) {
         HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant, thickness = 1.dp)
 
         Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+            SettingsRow(
+                icon = Icons.Filled.Storage,
+                title = "Эндпоинт API",
+                summary = apiEndpoint,
+                onClick = { showApiDialog = true },
+            )
+            SettingsDivider()
             SettingsRow(
                 icon = Icons.Filled.DeleteSweep,
                 title = "Очистить кэш изображений",
@@ -445,6 +459,46 @@ private fun DataSettings(onBack: () -> Unit) {
                 },
             )
         }
+    }
+
+    if (showApiDialog) {
+        AlertDialog(
+            onDismissRequest = { showApiDialog = false },
+            title = { Text("Эндпоинт API") },
+            text = {
+                Column {
+                    SettingsStore.API_ENDPOINTS.forEach { (host, label) ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    apiEndpoint = host
+                                    scope.launch {
+                                        settingsStore.setApiEndpoint(host)
+                                        api.baseUrl = SettingsStore.apiBaseUrl(host)
+                                    }
+                                    showApiDialog = false
+                                }
+                                .padding(vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = label,
+                                fontSize = 15.sp,
+                                color = MainText,
+                                modifier = Modifier.weight(1f),
+                            )
+                            if (apiEndpoint == host) {
+                                Text("✓", color = Carmine, fontSize = 16.sp)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showApiDialog = false }) { Text("Отмена") }
+            },
+        )
     }
 }
 

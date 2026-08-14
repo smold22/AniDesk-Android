@@ -29,16 +29,19 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -49,6 +52,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.launch
 import ru.anidesk.app.core.network.AnixartApi
 import ru.anidesk.app.core.network.Release
 import ru.anidesk.app.ui.components.ErrorBox
@@ -84,6 +88,7 @@ private val TABS = listOf<HomeTab>(
     HomeTab.Schedule,
 )
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     api: AnixartApi,
@@ -99,11 +104,13 @@ fun HomeScreen(
     var notificationCount by remember { mutableIntStateOf(0) }
     var loading by remember { mutableStateOf(true) }
     var loadingMore by remember { mutableStateOf(false) }
+    var refreshing by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var endReached by remember { mutableStateOf(false) }
     var page by remember { mutableIntStateOf(0) }
     val viewTypeState by settingsStore.viewType.collectAsStateWithLifecycle(initialValue = 0)
     val listMode = viewTypeState == 1
+    val scope = rememberCoroutineScope()
 
     suspend fun loadPage(pageToLoad: Int, replace: Boolean) {
         try {
@@ -129,6 +136,32 @@ fun HomeScreen(
         } finally {
             loading = false
             loadingMore = false
+        }
+    }
+
+    suspend fun refreshCurrentTab() {
+        error = null
+        val tab = TABS[tabIndex]
+        if (tab is HomeTab.Schedule) {
+            try {
+                val res = api.schedule()
+                schedule = listOf(
+                    "Понедельник" to res.monday,
+                    "Вторник" to res.tuesday,
+                    "Среда" to res.wednesday,
+                    "Четверг" to res.thursday,
+                    "Пятница" to res.friday,
+                    "Суббота" to res.saturday,
+                    "Воскресенье" to res.sunday,
+                )
+                scheduleDay = 0
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                error = "Не удалось обновить расписание: ${e.message}"
+            }
+        } else {
+            loadPage(0, replace = true)
         }
     }
 
@@ -209,49 +242,61 @@ fun HomeScreen(
 
         HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant, thickness = 1.dp)
 
-        when {
-            loading -> LoadingIndicator()
-            error != null -> ErrorBox(error!!)
-            TABS[tabIndex] is HomeTab.Schedule ->
-                ScheduleTab(schedule, scheduleDay, onSelectDay = { scheduleDay = it }, onOpenRelease = onOpenRelease)
-            else -> {
-                val gridState = rememberLazyGridState()
-                LaunchedEffect(gridState, releases.size) {
-                    snapshotFlow {
-                        val info = gridState.layoutInfo
-                        val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: 0
-                        lastVisible >= info.totalItemsCount - 3
-                    }.collect { nearEnd ->
-                        if (nearEnd && !endReached && !loadingMore && releases.isNotEmpty()) {
-                            loadingMore = true
-                            page++
-                            loadPage(page, replace = false)
-                        }
-                    }
+        PullToRefreshBox(
+            isRefreshing = refreshing,
+            onRefresh = {
+                scope.launch {
+                    refreshing = true
+                    refreshCurrentTab()
+                    refreshing = false
                 }
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(2),
-                    state = gridState,
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    items(
-                        releases,
-                        key = { it.id },
-                        span = { GridItemSpan(if (listMode) maxLineSpan else 1) },
-                    ) { release ->
-                        if (listMode) {
-                            ReleaseListItem(release = release, onClick = { onOpenRelease(release.id) })
-                        } else {
-                            ReleaseCard(release = release, onClick = { onOpenRelease(release.id) })
+            },
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            when {
+                loading -> LoadingIndicator()
+                error != null -> ErrorBox(error!!)
+                TABS[tabIndex] is HomeTab.Schedule ->
+                    ScheduleTab(schedule, scheduleDay, onSelectDay = { scheduleDay = it }, onOpenRelease = onOpenRelease)
+                else -> {
+                    val gridState = rememberLazyGridState()
+                    LaunchedEffect(gridState, releases.size) {
+                        snapshotFlow {
+                            val info = gridState.layoutInfo
+                            val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: 0
+                            lastVisible >= info.totalItemsCount - 3
+                        }.collect { nearEnd ->
+                            if (nearEnd && !endReached && !loadingMore && releases.isNotEmpty()) {
+                                loadingMore = true
+                                page++
+                                loadPage(page, replace = false)
+                            }
                         }
                     }
-                    if (loadingMore) {
-                        item {
-                            Box(Modifier.fillMaxWidth().padding(8.dp), contentAlignment = Alignment.Center) {
-                                Text("Загрузка...", color = ThirdText, fontSize = 12.sp)
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(2),
+                        state = gridState,
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        items(
+                            releases,
+                            key = { it.id },
+                            span = { GridItemSpan(if (listMode) maxLineSpan else 1) },
+                        ) { release ->
+                            if (listMode) {
+                                ReleaseListItem(release = release, onClick = { onOpenRelease(release.id) })
+                            } else {
+                                ReleaseCard(release = release, onClick = { onOpenRelease(release.id) })
+                            }
+                        }
+                        if (loadingMore) {
+                            item {
+                                Box(Modifier.fillMaxWidth().padding(8.dp), contentAlignment = Alignment.Center) {
+                                    Text("Загрузка...", color = ThirdText, fontSize = 12.sp)
+                                }
                             }
                         }
                     }
@@ -360,7 +405,7 @@ private fun ScheduleTab(
                         .padding(horizontal = 14.dp, vertical = 7.dp),
                 ) {
                     Text(
-                        text = day.substring(0, 3),
+                        text = day,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Medium,
                         color = if (selected) androidx.compose.ui.graphics.Color.White else ThirdText,

@@ -139,6 +139,7 @@ fun MainShell(
             }
             composable("settings") {
                 SettingsScreen(
+                    api = api,
                     settingsStore = settingsStore,
                     onBack = { navController.navigate("home") { launchSingleTop = true } },
                 )

@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
@@ -25,6 +26,7 @@ class SettingsStore(private val context: Context) {
     private val REWIND_TIME = intPreferencesKey("rewind_time")
     private val PLAYBACK_POSITIONS = stringSetPreferencesKey("playback_positions")
     private val DUBBER_SOURCES = stringSetPreferencesKey("dubber_sources")
+    private val API_ENDPOINT = stringPreferencesKey("api_endpoint")
 
     /** 0 = системная, 1 = светлая, 2 = тёмная */
     val theme: Flow<Int> = context.settingsDataStore.data.map { it[THEME] ?: 0 }
@@ -46,6 +48,9 @@ class SettingsStore(private val context: Context) {
 
     /** Шаг перемотки в секундах */
     val rewindTime: Flow<Int> = context.settingsDataStore.data.map { it[REWIND_TIME] ?: 10 }
+
+    /** Выбранный хост API Anixart */
+    val apiEndpoint: Flow<String> = context.settingsDataStore.data.map { it[API_ENDPOINT] ?: DEFAULT_API_ENDPOINT }
 
     suspend fun setTheme(value: Int) {
         context.settingsDataStore.edit { it[THEME] = value }
@@ -73,6 +78,10 @@ class SettingsStore(private val context: Context) {
 
     suspend fun setRewindTime(value: Int) {
         context.settingsDataStore.edit { it[REWIND_TIME] = value }
+    }
+
+    suspend fun setApiEndpoint(value: String) {
+        context.settingsDataStore.edit { it[API_ENDPOINT] = value }
     }
 
     suspend fun getPlaybackPosition(key: String): Long {
@@ -119,5 +128,20 @@ class SettingsStore(private val context: Context) {
             entries.add("$releaseId:source=$sourceId")
             prefs[DUBBER_SOURCES] = entries
         }
+    }
+
+    companion object {
+        const val DEFAULT_API_ENDPOINT = "api-s.anixsekai.com"
+
+        /** Доступные эндпоинты API Anixart (host -> подпись) */
+        val API_ENDPOINTS = listOf(
+            "api-s.anixsekai.com" to "api-s.anixsekai.com (основной)",
+            "api.anixart.app" to "api.anixart.app",
+            "api.anixart.tv" to "api.anixart.tv (заблокирован в РФ)",
+            "api.anixsekai.com" to "api.anixsekai.com",
+            "baproxy-demo.ds1nc.ru" to "baproxy-demo.ds1nc.ru (прокси)",
+        )
+
+        fun apiBaseUrl(host: String): String = "https://$host"
     }
 }

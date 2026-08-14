@@ -48,6 +48,11 @@ import ru.anidesk.app.ui.theme.SecondaryText
 fun LoginScreen(api: AnixartApi, sessionStore: SessionStore) {
     var login by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var confirmPassword by remember { mutableStateOf("") }
+    var email by remember { mutableStateOf("") }
+    var code by remember { mutableStateOf("") }
+    var hash by remember { mutableStateOf<String?>(null) }
+    var isRegister by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
@@ -84,12 +89,33 @@ fun LoginScreen(api: AnixartApi, sessionStore: SessionStore) {
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(12.dp),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
             colors = OutlinedTextFieldDefaults.colors(
                 focusedBorderColor = PlayerRed,
                 cursorColor = PlayerRed,
             ),
         )
+
+        if (isRegister && hash == null) {
+            Spacer(Modifier.height(14.dp))
+            OutlinedTextField(
+                value = email,
+                onValueChange = {
+                    email = it
+                    error = null
+                },
+                label = { Text("Почта") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = PlayerRed,
+                    cursorColor = PlayerRed,
+                ),
+            )
+        }
+
         Spacer(Modifier.height(14.dp))
         OutlinedTextField(
             value = password,
@@ -109,6 +135,47 @@ fun LoginScreen(api: AnixartApi, sessionStore: SessionStore) {
             ),
         )
 
+        if (isRegister && hash == null) {
+            Spacer(Modifier.height(14.dp))
+            OutlinedTextField(
+                value = confirmPassword,
+                onValueChange = {
+                    confirmPassword = it
+                    error = null
+                },
+                label = { Text("Повторите пароль") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = PlayerRed,
+                    cursorColor = PlayerRed,
+                ),
+            )
+        }
+
+        if (isRegister && hash != null) {
+            Spacer(Modifier.height(14.dp))
+            OutlinedTextField(
+                value = code,
+                onValueChange = {
+                    code = it
+                    error = null
+                },
+                label = { Text("Код из письма") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = PlayerRed,
+                    cursorColor = PlayerRed,
+                ),
+            )
+        }
+
         if (error != null) {
             Spacer(Modifier.height(12.dp))
             Text(
@@ -121,33 +188,105 @@ fun LoginScreen(api: AnixartApi, sessionStore: SessionStore) {
         Spacer(Modifier.height(24.dp))
         Button(
             onClick = {
-                if (login.isBlank() || password.isBlank()) {
-                    error = "Введите логин и пароль"
-                    return@Button
-                }
-                loading = true
                 error = null
-                scope.launch {
-                    try {
-                        val res = api.signIn(login.trim(), password)
-                        when (res.code) {
-                            0 -> {
-                                val token = res.profileToken
-                                val profile = res.profile
-                                if (token != null && profile != null) {
-                                    sessionStore.save(profile.id, token.token)
-                                } else {
-                                    error = "Некорректный ответ сервера"
+                if (isRegister && hash != null) {
+                    if (code.isBlank()) {
+                        error = "Введите код из письма"
+                        return@Button
+                    }
+                    val currentHash = hash ?: return@Button
+                    loading = true
+                    scope.launch {
+                        try {
+                            val res = api.signUpVerify(login.trim(), email.trim(), password, currentHash, code.trim())
+                            when (res.code) {
+                                0 -> {
+                                    val token = res.profileToken
+                                    val profile = res.profile
+                                    if (token != null && profile != null) {
+                                        sessionStore.save(profile.id, token.token)
+                                    } else {
+                                        error = "Некорректный ответ сервера"
+                                    }
                                 }
+                                2 -> error = "Некорректный логин"
+                                3 -> error = "Некорректная почта"
+                                4 -> error = "Некорректный пароль"
+                                5 -> error = "Логин уже занят"
+                                6 -> error = "Почта уже занята"
+                                7 -> error = "Неверный код"
+                                8 -> error = "Код истёк, зарегистрируйтесь заново"
+                                9 -> error = "Неверный хеш подтверждения"
+                                10 -> error = "Почтовый сервис недоступен"
+                                11 -> error = "Слишком много регистраций"
+                                else -> error = "Ошибка регистрации (код ${res.code})"
                             }
-                            2 -> error = "Неверный логин"
-                            3 -> error = "Неверный пароль"
-                            else -> error = "Ошибка авторизации (код ${res.code})"
+                        } catch (e: Exception) {
+                            error = "Сеть недоступна: ${e.message}"
+                        } finally {
+                            loading = false
                         }
-                    } catch (e: Exception) {
-                        error = "Сеть недоступна: ${e.message}"
-                    } finally {
-                        loading = false
+                    }
+                } else if (isRegister) {
+                    if (login.isBlank() || email.isBlank() || password.isBlank()) {
+                        error = "Заполните логин, почту и пароль"
+                        return@Button
+                    }
+                    if (password != confirmPassword) {
+                        error = "Пароли не совпадают"
+                        return@Button
+                    }
+                    loading = true
+                    scope.launch {
+                        try {
+                            val res = api.signUp(login.trim(), email.trim(), password)
+                            when (res.code) {
+                                0 -> hash = res.hash.ifBlank { null }
+                                2 -> error = "Некорректный логин"
+                                3 -> error = "Некорректная почта"
+                                4 -> error = "Некорректный пароль"
+                                5 -> error = "Логин уже занят"
+                                6 -> error = "Почта уже занята"
+                                7 -> error = "Код уже отправлен"
+                                8 -> error = "Не удалось отправить код"
+                                9 -> error = "Почтовый сервис недоступен"
+                                10 -> error = "Слишком много регистраций"
+                                else -> error = "Ошибка регистрации (код ${res.code})"
+                            }
+                        } catch (e: Exception) {
+                            error = "Сеть недоступна: ${e.message}"
+                        } finally {
+                            loading = false
+                        }
+                    }
+                } else {
+                    if (login.isBlank() || password.isBlank()) {
+                        error = "Введите логин и пароль"
+                        return@Button
+                    }
+                    loading = true
+                    scope.launch {
+                        try {
+                            val res = api.signIn(login.trim(), password)
+                            when (res.code) {
+                                0 -> {
+                                    val token = res.profileToken
+                                    val profile = res.profile
+                                    if (token != null && profile != null) {
+                                        sessionStore.save(profile.id, token.token)
+                                    } else {
+                                        error = "Некорректный ответ сервера"
+                                    }
+                                }
+                                2 -> error = "Неверный логин"
+                                3 -> error = "Неверный пароль"
+                                else -> error = "Ошибка авторизации (код ${res.code})"
+                            }
+                        } catch (e: Exception) {
+                            error = "Сеть недоступна: ${e.message}"
+                        } finally {
+                            loading = false
+                        }
                     }
                 }
             },
@@ -165,14 +304,32 @@ fun LoginScreen(api: AnixartApi, sessionStore: SessionStore) {
                     strokeWidth = 2.dp,
                 )
             } else {
-                Text("Войти", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                Text(
+                    text = when {
+                        isRegister && hash != null -> "Подтвердить"
+                        isRegister -> "Зарегистрироваться"
+                        else -> "Войти"
+                    },
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
             }
         }
 
         Spacer(Modifier.height(16.dp))
         Row {
-            TextButton(onClick = { }) {
-                Text("Регистрация", color = SecondaryText, fontSize = 14.sp)
+            TextButton(
+                onClick = {
+                    isRegister = !isRegister
+                    hash = null
+                    error = null
+                }
+            ) {
+                Text(
+                    text = if (isRegister) "← Ко входу" else "Регистрация",
+                    color = SecondaryText,
+                    fontSize = 14.sp,
+                )
             }
         }
     }

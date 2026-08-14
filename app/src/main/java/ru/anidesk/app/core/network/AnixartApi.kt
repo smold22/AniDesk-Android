@@ -55,6 +55,38 @@ class AnixartApi(
         return response.body()
     }
 
+    suspend fun signUp(login: String, email: String, password: String): SignUpResponse {
+        val form = listOf("login" to login, "email" to email, "password" to password)
+        val response = client.post("$baseUrl/auth/signUp") {
+            header("User-Agent", USER_AGENT)
+            contentType(ContentType.Application.FormUrlEncoded)
+            setBody(form.formUrlEncode())
+        }
+        return response.body()
+    }
+
+    suspend fun signUpVerify(
+        login: String,
+        email: String,
+        password: String,
+        hash: String,
+        code: String,
+    ): VerifyResponse {
+        val form = listOf(
+            "login" to login,
+            "email" to email,
+            "password" to password,
+            "hash" to hash,
+            "code" to code,
+        )
+        val response = client.post("$baseUrl/auth/verify") {
+            header("User-Agent", USER_AGENT)
+            contentType(ContentType.Application.FormUrlEncoded)
+            setBody(form.formUrlEncode())
+        }
+        return response.body()
+    }
+
     // ---------- Profile ----------
 
     suspend fun profile(id: Int): ProfileResponse = apiGet("/profile/$id")
