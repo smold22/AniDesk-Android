@@ -6,7 +6,6 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -17,11 +16,6 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.GridItemSpan
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -42,23 +36,28 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import ru.anidesk.app.core.network.AnixartApi
 import ru.anidesk.app.core.network.Release
 import ru.anidesk.app.ui.components.ErrorBox
 import ru.anidesk.app.ui.components.LoadingIndicator
-import ru.anidesk.app.ui.components.ReleaseCard
-import ru.anidesk.app.ui.components.ReleaseListItem
+import ru.anidesk.app.ui.components.ReleaseGrid
+import ru.anidesk.app.ui.components.TvKeyRouter
+import ru.anidesk.app.ui.components.isTv
 import ru.anidesk.app.ui.theme.AltBackground
 import ru.anidesk.app.ui.theme.Carmine
 import ru.anidesk.app.ui.theme.MainText
@@ -72,6 +71,7 @@ private sealed interface HomeTab {
         val sort: Int = 0,
         val statusId: Int? = null,
         val categoryId: Int? = null,
+        val country: String? = null,
     ) : HomeTab
 
     data object Schedule : HomeTab {
@@ -80,11 +80,14 @@ private sealed interface HomeTab {
 }
 
 private val TABS = listOf<HomeTab>(
+    HomeTab.Filter("Аниме", country = "Япония"),
+    HomeTab.Filter("Дунхуа", country = "Китай"),
     HomeTab.Filter("Последние", sort = 0),
     HomeTab.Filter("Онгоинги", statusId = 2),
     HomeTab.Filter("Анонсы", statusId = 3),
     HomeTab.Filter("Завершенные", statusId = 1),
     HomeTab.Filter("Фильмы", categoryId = 2),
+    HomeTab.Filter("OVA", categoryId = 3),
     HomeTab.Schedule,
 )
 
@@ -97,7 +100,7 @@ fun HomeScreen(
     onOpenSearch: () -> Unit,
     onOpenNotifications: (() -> Unit)? = null,
 ) {
-    var tabIndex by remember { mutableIntStateOf(0) }
+    var tabIndex by rememberSaveable { mutableIntStateOf(0) }
     var releases by remember { mutableStateOf<List<Release>>(emptyList()) }
     var schedule by remember { mutableStateOf<List<Pair<String, List<Release>>>>(emptyList()) }
     var scheduleDay by remember { mutableIntStateOf(0) }
@@ -111,6 +114,9 @@ fun HomeScreen(
     val viewTypeState by settingsStore.viewType.collectAsStateWithLifecycle(initialValue = 0)
     val listMode = viewTypeState == 1
     val scope = rememberCoroutineScope()
+    val tv = isTv()
+    val firstTabFocusRequester = remember { FocusRequester() }
+    var firstTabEverFocused by remember { mutableStateOf(false) }
 
     suspend fun loadPage(pageToLoad: Int, replace: Boolean) {
         try {
@@ -120,6 +126,7 @@ fun HomeScreen(
                     sort = tab.sort,
                     statusId = tab.statusId,
                     categoryId = tab.categoryId,
+                    country = tab.country,
                 )
                 HomeTab.Schedule -> return
             }
@@ -203,6 +210,15 @@ fun HomeScreen(
         }
     }
 
+    LaunchedEffect(Unit) {
+        if (tv) {
+            while (!firstTabEverFocused && !TvKeyRouter.userInteracted) {
+                runCatching { firstTabFocusRequester.requestFocus() }
+                delay(250)
+            }
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -228,6 +244,12 @@ fun HomeScreen(
                         .clip(RoundedCornerShape(8.dp))
                         .background(if (tabIndex == index) Carmine.copy(alpha = 0.15f) else AltBackground)
                         .clickable { if (tabIndex != index) tabIndex = index }
+                        .then(
+                            if (index == 0) Modifier.focusRequester(firstTabFocusRequester) else Modifier
+                        )
+                        .onFocusChanged {
+                            if (index == 0 && it.isFocused) firstTabEverFocused = true
+                        }
                         .padding(horizontal = 12.dp, vertical = 7.dp),
                 ) {
                     Text(
@@ -242,65 +264,46 @@ fun HomeScreen(
 
         HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant, thickness = 1.dp)
 
-        PullToRefreshBox(
-            isRefreshing = refreshing,
-            onRefresh = {
-                scope.launch {
-                    refreshing = true
-                    refreshCurrentTab()
-                    refreshing = false
-                }
-            },
-            modifier = Modifier.fillMaxSize(),
-        ) {
+        val content: @Composable () -> Unit = {
             when {
                 loading -> LoadingIndicator()
                 error != null -> ErrorBox(error!!)
                 TABS[tabIndex] is HomeTab.Schedule ->
                     ScheduleTab(schedule, scheduleDay, onSelectDay = { scheduleDay = it }, onOpenRelease = onOpenRelease)
                 else -> {
-                    val gridState = rememberLazyGridState()
-                    LaunchedEffect(gridState, releases.size) {
-                        snapshotFlow {
-                            val info = gridState.layoutInfo
-                            val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: 0
-                            lastVisible >= info.totalItemsCount - 3
-                        }.collect { nearEnd ->
-                            if (nearEnd && !endReached && !loadingMore && releases.isNotEmpty()) {
+                    ReleaseGrid(
+                        releases = releases,
+                        onOpenRelease = onOpenRelease,
+                        listMode = listMode,
+                        loadingMore = loadingMore,
+                        onLoadMore = {
+                            if (!endReached && !loadingMore && releases.isNotEmpty()) {
                                 loadingMore = true
                                 page++
                                 loadPage(page, replace = false)
                             }
-                        }
-                    }
-                    LazyVerticalGrid(
-                        columns = GridCells.Fixed(2),
-                        state = gridState,
+                        },
                         modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        items(
-                            releases,
-                            key = { it.id },
-                            span = { GridItemSpan(if (listMode) maxLineSpan else 1) },
-                        ) { release ->
-                            if (listMode) {
-                                ReleaseListItem(release = release, onClick = { onOpenRelease(release.id) })
-                            } else {
-                                ReleaseCard(release = release, onClick = { onOpenRelease(release.id) })
-                            }
-                        }
-                        if (loadingMore) {
-                            item {
-                                Box(Modifier.fillMaxWidth().padding(8.dp), contentAlignment = Alignment.Center) {
-                                    Text("Загрузка...", color = ThirdText, fontSize = 12.sp)
-                                }
-                            }
-                        }
-                    }
+                    )
                 }
+            }
+        }
+
+        if (tv) {
+            content()
+        } else {
+            PullToRefreshBox(
+                isRefreshing = refreshing,
+                onRefresh = {
+                    scope.launch {
+                        refreshing = true
+                        refreshCurrentTab()
+                        refreshing = false
+                    }
+                },
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                content()
             }
         }
     }
@@ -322,7 +325,7 @@ private fun HomeHeader(
             modifier = Modifier
                 .weight(1f)
                 .height(48.dp)
-                .clip(RoundedCornerShape(24.dp))
+                .clip(RoundedCornerShape(8.dp))
                 .background(AltBackground)
                 .clickable(onClick = onOpenSearch)
                 .padding(horizontal = 16.dp),
@@ -399,16 +402,16 @@ private fun ScheduleTab(
                 val selected = selectedDay == index
                 Box(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(50))
-                        .background(if (selected) Carmine else AltBackground)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (selected) Carmine.copy(alpha = 0.15f) else AltBackground)
                         .clickable { onSelectDay(index) }
-                        .padding(horizontal = 14.dp, vertical = 7.dp),
+                        .padding(horizontal = 12.dp, vertical = 7.dp),
                 ) {
                     Text(
                         text = day,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = if (selected) androidx.compose.ui.graphics.Color.White else ThirdText,
+                        fontSize = 14.sp,
+                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                        color = if (selected) Carmine else ThirdText,
                     )
                 }
             }
@@ -419,17 +422,11 @@ private fun ScheduleTab(
                 Text("Нет релизов", color = ThirdText)
             }
         } else {
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(2),
+            ReleaseGrid(
+                releases = releases,
+                onOpenRelease = onOpenRelease,
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                items(releases, key = { it.id }) { release ->
-                    ReleaseCard(release = release, onClick = { onOpenRelease(release.id) })
-                }
-            }
+            )
         }
     }
 }

@@ -39,13 +39,20 @@ object SourceParsers {
     suspend fun parse(episodeUrl: String, sourceName: String): Map<String, String> =
         withContext(Dispatchers.IO) {
             val result = try {
-                when (sourceName) {
-                    "Kodik" -> kodik(episodeUrl)
-                    "Libria", "Liberty" -> anilibria(episodeUrl)
-                    "Sibnet" -> {
+                directMedia(episodeUrl)?.let { return@withContext mapOf("720" to it) }
+                val lower = sourceName.lowercase()
+                when {
+                    lower.contains("kodik") -> kodik(episodeUrl)
+                    lower.contains("anilibria") || lower.contains("liberty") || lower.contains("libria") ->
+                        anilibria(episodeUrl)
+
+                    lower.contains("sibnet") -> {
                         val link = sibnet(episodeUrl) ?: return@withContext emptyMap()
                         mapOf("720" to link)
                     }
+                    lower.contains("rutube") -> ruTube(episodeUrl)
+                    lower.contains("studiomir") || lower.contains("tsm") -> studiomir(episodeUrl)
+                    isProxyParserUrl(episodeUrl) -> proxyParser(episodeUrl)
                     else -> emptyMap()
                 }
             } catch (e: Exception) {
@@ -56,10 +63,44 @@ object SourceParsers {
             result
         }
 
-    private fun fetch(url: String): String? =
+    /** Прямые медиа-URL (mp4/m3u8 или CDN Alloha/CVH-хосты) играются без парсинга. */
+    private fun directMedia(url: String): String? {
+        val host = runCatching { url.toHttpUrl().host }.getOrNull() ?: return null
+        if (DIRECT_CDN_HOSTS.any { host.contains(it) }) return url
+        val path = runCatching { url.toHttpUrl().encodedPath }.getOrNull().orEmpty()
+        if (path.endsWith(".mp4") || path.endsWith(".m3u8") || path.endsWith(".ts")) return url
+        return null
+    }
+
+    private fun fetch(url: String, headers: Map<String, String> = emptyMap()): String? =
         runCatching {
-            client.newCall(Request.Builder().url(url).build()).execute().use { it.body?.string() }
+            val builder = Request.Builder().url(url)
+            headers.forEach { (k, v) -> builder.header(k, v) }
+            client.newCall(builder.build()).execute().use { it.body?.string() }
         }.getOrNull()
+
+    // ---------- RuTube ----------
+
+    private fun ruTube(url: String): Map<String, String> {
+        val id = Regex("""(?:/video/|/embed/|/short/|[?&]id=)([0-9a-f]{32}|[0-9a-f]{24})""")
+            .find(url)?.groupValues?.get(1)
+            ?: Regex("""(\d{6,})""").find(url)?.groupValues?.get(1)
+            ?: return emptyMap()
+        val api = "https://rutube.ru/api/play/options/$id/?no_404=true"
+        val body = fetch(api, mapOf("User-Agent" to DESKTOP_UA)) ?: return emptyMap()
+        val root = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull() ?: return emptyMap()
+        val balancer = root["video_balancer"]?.jsonObject
+            ?: root["video_balancer"]?.jsonPrimitive?.contentOrNull?.let { raw ->
+                runCatching { json.parseToJsonElement(raw).jsonObject }.getOrNull()
+            }
+            ?: return emptyMap()
+        val m3u8 = balancer["m3u8"]?.jsonPrimitive?.contentOrNull
+            ?: balancer["default"]?.jsonPrimitive?.contentOrNull
+            ?: return emptyMap()
+        val result = LinkedHashMap<String, String>()
+        result["auto"] = m3u8
+        return result
+    }
 
     // ---------- Kodik ----------
 
@@ -166,7 +207,7 @@ object SourceParsers {
     // ---------- Sibnet ----------
 
     private fun sibnet(url: String): String? {
-        val page = fetch(url) ?: return null
+        val page = fetch(url, mapOf("User-Agent" to DESKTOP_UA, "Referer" to url)) ?: return null
         val match = Regex("""src:\s*(".*?")""").find(page) ?: return null
         val path = match.groupValues[1].replace("\"", "")
         val full = if (path.startsWith("http")) path else "https://video.sibnet.ru$path"
@@ -175,8 +216,9 @@ object SourceParsers {
             val response = client.newCall(
                 Request.Builder()
                     .url(full)
-                    .header("Host", "video.sibnet.ru")
+                    .header("User-Agent", DESKTOP_UA)
                     .header("Referer", url)
+                    .header("Origin", "https://video.sibnet.ru")
                     .build()
             ).execute()
             response.use {
@@ -208,4 +250,70 @@ object SourceParsers {
             }
         }
     }
+
+    // ---------- TSM / StudioMir ----------
+
+    private fun studiomir(url: String): Map<String, String> {
+        val ani = Regex("""[?&]ani=(\d+)""").find(url)?.groupValues?.get(1) ?: return emptyMap()
+        val ep = Regex("""[?&]ep=(\d+)""").find(url)?.groupValues?.get(1)?.toIntOrNull() ?: return emptyMap()
+        val body = fetch("https://api.studiomir.club/api?ani=$ani&apikey=$STUDIOMIR_API_KEY")
+            ?: return emptyMap()
+        val root = runCatching { json.parseToJsonElement(body).jsonArray }.getOrNull()
+            ?: return emptyMap()
+        val players = root.firstOrNull()?.jsonObject?.get("players")?.jsonObject ?: return emptyMap()
+        val tsm = players["tsm"]?.jsonArray ?: return emptyMap()
+        val target = tsm.firstOrNull {
+            val obj = it.jsonObject
+            obj["type"]?.jsonPrimitive?.contentOrNull == "TV" &&
+                obj["episode"]?.jsonPrimitive?.intOrNull == ep
+        } ?: return emptyMap()
+        val hls = target.jsonObject["hls"]?.jsonObject ?: return emptyMap()
+        return buildMap {
+            hls.forEach { (quality, value) ->
+                val q = quality.removeSuffix("p")
+                if (q.isNotEmpty() && q.all(Char::isDigit)) put(q, value.jsonPrimitive.content)
+            }
+        }
+    }
+
+    // ---------- Anixora / прокси-парсеры (Alloha, CVH) ----------
+    //
+    // API-прокси (например baproxy-demo.ds1nc.ru) отдаёт эпизоды балансеров [Anixora] Alloha и
+    // [Anixora] CVH в виде: https://host/cp/parser/cvh?token=<jwt>. GET по этому URL возвращает
+    // {"code":0,"result":{"master":"...m3u8","quality":{"360":"...","480":"...",...}}}
+    // с прямыми ссылками (okcdn.ru для CVH, hlsp-прокси для Alloha).
+
+    private fun isProxyParserUrl(url: String): Boolean {
+        val path = runCatching { url.toHttpUrl().encodedPath }.getOrNull().orEmpty()
+        return path.contains("/cp/parser/")
+    }
+
+    private fun proxyParser(url: String): Map<String, String> {
+        val body = fetch(url) ?: return emptyMap()
+        val root = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull()
+            ?: return emptyMap()
+        val result = root["result"]?.jsonObject ?: return emptyMap()
+        val resultMap = LinkedHashMap<String, String>()
+        result["quality"]?.jsonObject?.forEach { (quality, value) ->
+            value.jsonPrimitive.contentOrNull?.let { resultMap[quality] = it }
+        }
+        result["master"]?.jsonPrimitive?.contentOrNull?.let { resultMap["auto"] = it }
+        return resultMap
+    }
+
+    private const val DESKTOP_UA =
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+    private const val STUDIOMIR_API_KEY = "80b2d3e9c4ff27eb2e924c4d38f7daec"
+
+    /** CDN-хосты Alloha/CVH (и им подобные), с которых видео играется напрямую. */
+    private val DIRECT_CDN_HOSTS = listOf(
+        "csst.online",
+        "sstrge.online",
+        "secvideo1.online",
+        "anixora",
+        "alloha",
+        "torlook",
+        "vidcdn",
+    )
 }

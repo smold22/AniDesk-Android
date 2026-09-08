@@ -24,6 +24,8 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -31,15 +33,21 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import ru.anidesk.app.core.network.AnixartApi
 import ru.anidesk.app.core.network.SessionStore
+import ru.anidesk.app.ui.components.TvKeyRouter
+import ru.anidesk.app.ui.components.isTv
 import ru.anidesk.app.ui.theme.MainText
 import ru.anidesk.app.ui.theme.PlayerRed
 import ru.anidesk.app.ui.theme.SecondaryText
@@ -53,9 +61,59 @@ fun LoginScreen(api: AnixartApi, sessionStore: SessionStore) {
     var code by remember { mutableStateOf("") }
     var hash by remember { mutableStateOf<String?>(null) }
     var isRegister by remember { mutableStateOf(false) }
+    var isRestore by remember { mutableStateOf(false) }
+    var restoreHash by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    val tv = isTv()
+    val loginFocusRequester = remember { FocusRequester() }
+    val passwordFocusRequester = remember { FocusRequester() }
+    val submitFocusRequester = remember { FocusRequester() }
+    var loginFocused by remember { mutableStateOf(false) }
+    var passwordFocused by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        if (tv) {
+            delay(150)
+            loginFocusRequester.requestFocus()
+        }
+    }
+
+    if (tv) {
+        DisposableEffect(Unit) {
+            TvKeyRouter.fieldDpadDown = {
+                when {
+                    loginFocused -> {
+                        passwordFocusRequester.requestFocus()
+                        true
+                    }
+                    passwordFocused -> {
+                        submitFocusRequester.requestFocus()
+                        true
+                    }
+                    else -> false
+                }
+            }
+            TvKeyRouter.fieldDpadUp = {
+                when {
+                    loginFocused -> {
+                        submitFocusRequester.requestFocus()
+                        true
+                    }
+                    passwordFocused -> {
+                        loginFocusRequester.requestFocus()
+                        true
+                    }
+                    else -> false
+                }
+            }
+            onDispose {
+                TvKeyRouter.fieldDpadDown = null
+                TvKeyRouter.fieldDpadUp = null
+            }
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -72,11 +130,6 @@ fun LoginScreen(api: AnixartApi, sessionStore: SessionStore) {
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onBackground,
         )
-        Text(
-            text = "Неофициальный клиент Anixart",
-            fontSize = 14.sp,
-            color = SecondaryText,
-        )
         Spacer(Modifier.height(36.dp))
 
         OutlinedTextField(
@@ -87,7 +140,10 @@ fun LoginScreen(api: AnixartApi, sessionStore: SessionStore) {
             },
             label = { Text("Логин") },
             singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(if (tv) Modifier.focusRequester(loginFocusRequester) else Modifier)
+                .onFocusChanged { loginFocused = it.isFocused },
             shape = RoundedCornerShape(12.dp),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
             colors = OutlinedTextFieldDefaults.colors(
@@ -117,23 +173,28 @@ fun LoginScreen(api: AnixartApi, sessionStore: SessionStore) {
         }
 
         Spacer(Modifier.height(14.dp))
-        OutlinedTextField(
-            value = password,
-            onValueChange = {
-                password = it
-                error = null
-            },
-            label = { Text("Пароль") },
-            singleLine = true,
-            visualTransformation = PasswordVisualTransformation(),
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(12.dp),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = PlayerRed,
-                cursorColor = PlayerRed,
-            ),
-        )
+        if (!isRestore || restoreHash != null) {
+            OutlinedTextField(
+                value = password,
+                onValueChange = {
+                    password = it
+                    error = null
+                },
+                label = { Text(if (isRestore) "Новый пароль" else "Пароль") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(if (tv) Modifier.focusRequester(passwordFocusRequester) else Modifier)
+                    .onFocusChanged { passwordFocused = it.isFocused },
+                shape = RoundedCornerShape(12.dp),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = PlayerRed,
+                    cursorColor = PlayerRed,
+                ),
+            )
+        }
 
         if (isRegister && hash == null) {
             Spacer(Modifier.height(14.dp))
@@ -156,7 +217,7 @@ fun LoginScreen(api: AnixartApi, sessionStore: SessionStore) {
             )
         }
 
-        if (isRegister && hash != null) {
+        if ((isRegister && hash != null) || (isRestore && restoreHash != null)) {
             Spacer(Modifier.height(14.dp))
             OutlinedTextField(
                 value = code,
@@ -189,6 +250,65 @@ fun LoginScreen(api: AnixartApi, sessionStore: SessionStore) {
         Button(
             onClick = {
                 error = null
+                if (isRestore) {
+                    if (restoreHash == null) {
+                        if (login.isBlank()) {
+                            error = "Введите логин"
+                            return@Button
+                        }
+                        loading = true
+                        scope.launch {
+                            try {
+                                val res = api.restorePassword(login.trim())
+                                when (res.code) {
+                                    0 -> restoreHash = res.hash.ifBlank { null }
+                                    2 -> error = "Профиль не найден"
+                                    3 -> error = "Код уже отправлен"
+                                    4 -> error = "Не удалось отправить код"
+                                    else -> error = "Ошибка восстановления (код ${res.code})"
+                                }
+                            } catch (e: Exception) {
+                                error = "Сеть недоступна: ${e.message}"
+                            } finally {
+                                loading = false
+                            }
+                        }
+                    } else {
+                        if (password.isBlank() || code.isBlank()) {
+                            error = "Введите новый пароль и код из письма"
+                            return@Button
+                        }
+                        val currentHash = restoreHash ?: return@Button
+                        loading = true
+                        scope.launch {
+                            try {
+                                val res = api.restorePasswordVerify(login.trim(), password, currentHash, code.trim())
+                                when (res.code) {
+                                    0 -> {
+                                        val token = res.profileToken
+                                        val profile = res.profile
+                                        if (token != null && profile != null) {
+                                            sessionStore.save(profile.id, token.token)
+                                        } else {
+                                            error = "Некорректный ответ сервера"
+                                        }
+                                    }
+                                    2 -> error = "Профиль не найден"
+                                    3 -> error = "Некорректный пароль"
+                                    4 -> error = "Неверный код"
+                                    5 -> error = "Код истёк, начните восстановление заново"
+                                    6 -> error = "Неверный хеш, начните восстановление заново"
+                                    else -> error = "Ошибка восстановления (код ${res.code})"
+                                }
+                            } catch (e: Exception) {
+                                error = "Сеть недоступна: ${e.message}"
+                            } finally {
+                                loading = false
+                            }
+                        }
+                    }
+                    return@Button
+                }
                 if (isRegister && hash != null) {
                     if (code.isBlank()) {
                         error = "Введите код из письма"
@@ -293,7 +413,8 @@ fun LoginScreen(api: AnixartApi, sessionStore: SessionStore) {
             enabled = !loading,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(50.dp),
+                .height(50.dp)
+                .then(if (tv) Modifier.focusRequester(submitFocusRequester) else Modifier),
             shape = RoundedCornerShape(12.dp),
             colors = ButtonDefaults.buttonColors(containerColor = PlayerRed),
         ) {
@@ -306,6 +427,7 @@ fun LoginScreen(api: AnixartApi, sessionStore: SessionStore) {
             } else {
                 Text(
                     text = when {
+                        isRestore -> "Восстановить"
                         isRegister && hash != null -> "Подтвердить"
                         isRegister -> "Зарегистрироваться"
                         else -> "Войти"
@@ -317,19 +439,50 @@ fun LoginScreen(api: AnixartApi, sessionStore: SessionStore) {
         }
 
         Spacer(Modifier.height(16.dp))
-        Row {
+        if (isRegister || isRestore) {
             TextButton(
                 onClick = {
-                    isRegister = !isRegister
+                    isRegister = false
+                    isRestore = false
                     hash = null
+                    restoreHash = null
+                    code = ""
+                    password = ""
                     error = null
                 }
             ) {
                 Text(
-                    text = if (isRegister) "← Ко входу" else "Регистрация",
+                    text = "← Ко входу",
                     color = SecondaryText,
                     fontSize = 14.sp,
                 )
+            }
+        } else {
+            Row {
+                TextButton(
+                    onClick = {
+                        isRegister = true
+                        error = null
+                    }
+                ) {
+                    Text(
+                        text = "Регистрация",
+                        color = SecondaryText,
+                        fontSize = 14.sp,
+                    )
+                }
+                TextButton(
+                    onClick = {
+                        isRestore = true
+                        error = null
+                    }
+                ) {
+                    Text(
+                        text = "Забыли пароль?",
+                        color = SecondaryText,
+                        fontSize = 14.sp,
+                    )
+                }
             }
         }
     }

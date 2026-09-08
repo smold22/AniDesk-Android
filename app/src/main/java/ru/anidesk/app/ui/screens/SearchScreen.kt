@@ -5,7 +5,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,42 +15,40 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.GridItemSpan
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ru.anidesk.app.core.network.AnixartApi
 import ru.anidesk.app.core.network.Release
 import ru.anidesk.app.ui.components.ErrorBox
 import ru.anidesk.app.ui.components.LoadingIndicator
-import ru.anidesk.app.ui.components.ReleaseCard
-import ru.anidesk.app.ui.components.ReleaseListItem
+import ru.anidesk.app.ui.components.ReleaseGrid
+import ru.anidesk.app.ui.components.TvKeyRouter
+import ru.anidesk.app.ui.components.isTv
 import ru.anidesk.app.ui.theme.AltBackground
 import ru.anidesk.app.ui.theme.Carmine
 import ru.anidesk.app.ui.theme.MainText
@@ -65,6 +62,8 @@ fun SearchScreen(
     onOpenRelease: (Int) -> Unit,
 ) {
     var query by remember { mutableStateOf("") }
+    var filter by remember { mutableStateOf(SearchFilter()) }
+    var showFilter by remember { mutableStateOf(false) }
     var results by remember { mutableStateOf<List<Release>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var loadingMore by remember { mutableStateOf(false) }
@@ -74,10 +73,38 @@ fun SearchScreen(
     var error by remember { mutableStateOf<String?>(null) }
     val viewTypeState by settingsStore.viewType.collectAsStateWithLifecycle(initialValue = 0)
     val listMode = viewTypeState == 1
+    val tv = isTv()
+    val searchFocusRequester = remember { FocusRequester() }
+    val firstResultFocusRequester = remember { FocusRequester() }
+    var searchFocused by remember { mutableStateOf(false) }
 
-    LaunchedEffect(query) {
+    LaunchedEffect(Unit) {
+        if (tv) {
+            delay(150)
+            searchFocusRequester.requestFocus()
+        }
+    }
+
+    if (tv) {
+        DisposableEffect(Unit) {
+            TvKeyRouter.fieldDpadDown = {
+                if (searchFocused && results.isNotEmpty()) {
+                    runCatching { firstResultFocusRequester.requestFocus() }
+                    true
+                } else {
+                    false
+                }
+            }
+            onDispose {
+                TvKeyRouter.fieldDpadDown = null
+            }
+        }
+    }
+
+    LaunchedEffect(query, filter) {
         val q = query.trim()
-        if (q.length < 2) {
+        val filterActive = !filter.isEmpty
+        if (q.length < 2 && !filterActive) {
             results = emptyList()
             searched = false
             loading = false
@@ -89,7 +116,23 @@ fun SearchScreen(
         page = 0
         delay(400)
         try {
-            results = api.searchReleases(0, q)
+            results = if (q.isNotEmpty()) {
+                api.searchReleases(0, q)
+            } else {
+                api.filterReleases(
+                    page = 0,
+                    sort = filter.sort,
+                    statusId = filter.statusId,
+                    categoryId = filter.categoryId,
+                    country = filter.country,
+                    startYear = filter.startYear,
+                    endYear = filter.endYear,
+                    season = filter.season,
+                    genres = filter.genres,
+                    types = filter.types,
+                    ageRatings = filter.ageRatings,
+                ).content
+            }
             searched = true
             endReached = results.isEmpty()
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -99,6 +142,19 @@ fun SearchScreen(
         } finally {
             loading = false
         }
+    }
+
+    if (showFilter) {
+        SearchFilterScreen(
+            api = api,
+            initial = filter,
+            onApply = {
+                filter = it
+                showFilter = false
+            },
+            onClose = { showFilter = false },
+        )
+        return
     }
 
     Column(
@@ -127,8 +183,11 @@ fun SearchScreen(
                 onValueChange = { query = it },
                 placeholder = { Text("Поиск релизов", color = ThirdText) },
                 singleLine = true,
-                shape = RoundedCornerShape(24.dp),
-                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .then(if (tv) Modifier.focusRequester(searchFocusRequester) else Modifier)
+                    .onFocusChanged { searchFocused = it.isFocused },
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedBorderColor = Carmine,
                     unfocusedBorderColor = AltBackground,
@@ -136,6 +195,14 @@ fun SearchScreen(
                     focusedContainerColor = AltBackground,
                     unfocusedContainerColor = AltBackground,
                 ),
+            )
+            Icon(
+                imageVector = Icons.Filled.Tune,
+                contentDescription = "Фильтр",
+                tint = if (!filter.isEmpty) Carmine else MainText,
+                modifier = Modifier
+                    .clickable { showFilter = true }
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
             )
         }
 
@@ -149,17 +216,35 @@ fun SearchScreen(
                 Text(if (searched) "Ничего не найдено" else "", color = ThirdText, fontSize = 14.sp)
             }
             else -> {
-                val gridState = rememberLazyGridState()
-                LaunchedEffect(gridState, results.size) {
-                    snapshotFlow {
-                        val info = gridState.layoutInfo
-                        val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: 0
-                        lastVisible >= info.totalItemsCount - 3
-                    }.distinctUntilChanged().collect { nearEnd ->
-                        if (nearEnd && !endReached && !loadingMore && results.isNotEmpty()) {
+                ReleaseGrid(
+                    releases = results,
+                    onOpenRelease = onOpenRelease,
+                    listMode = listMode,
+                    loadingMore = loadingMore,
+                    firstItemFocusRequester = firstResultFocusRequester,
+                    onLoadMore = {
+                        if (!endReached && !loadingMore && results.isNotEmpty()) {
                             loadingMore = true
                             val next = page + 1
-                            runCatching { api.searchReleases(next, query.trim()) }
+                            runCatching {
+                                if (query.trim().isNotEmpty()) {
+                                    api.searchReleases(next, query.trim())
+                                } else {
+                                    api.filterReleases(
+                                        page = next,
+                                        sort = filter.sort,
+                                        statusId = filter.statusId,
+                                        categoryId = filter.categoryId,
+                                        country = filter.country,
+                                        startYear = filter.startYear,
+                                        endYear = filter.endYear,
+                                        season = filter.season,
+                                        genres = filter.genres,
+                                        types = filter.types,
+                                        ageRatings = filter.ageRatings,
+                                    ).content
+                                }
+                            }
                                 .onSuccess { more ->
                                     if (more.isEmpty()) {
                                         endReached = true
@@ -170,35 +255,9 @@ fun SearchScreen(
                                 }
                             loadingMore = false
                         }
-                    }
-                }
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(2),
-                    state = gridState,
+                    },
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    items(
-                        results,
-                        key = { it.id },
-                        span = { GridItemSpan(if (listMode) maxLineSpan else 1) },
-                    ) { release ->
-                        if (listMode) {
-                            ReleaseListItem(release = release, onClick = { onOpenRelease(release.id) })
-                        } else {
-                            ReleaseCard(release = release, onClick = { onOpenRelease(release.id) })
-                        }
-                    }
-                    if (loadingMore) {
-                        item {
-                            Box(Modifier.fillMaxWidth().padding(8.dp), contentAlignment = Alignment.Center) {
-                                Text("Загрузка...", color = ThirdText, fontSize = 12.sp)
-                            }
-                        }
-                    }
-                }
+                )
             }
         }
     }

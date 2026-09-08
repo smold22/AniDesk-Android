@@ -27,6 +27,7 @@ class SettingsStore(private val context: Context) {
     private val PLAYBACK_POSITIONS = stringSetPreferencesKey("playback_positions")
     private val DUBBER_SOURCES = stringSetPreferencesKey("dubber_sources")
     private val API_ENDPOINT = stringPreferencesKey("api_endpoint")
+    private val DOWNLOADED_EPISODES = stringSetPreferencesKey("downloaded_episodes")
 
     /** 0 = системная, 1 = светлая, 2 = тёмная */
     val theme: Flow<Int> = context.settingsDataStore.data.map { it[THEME] ?: 0 }
@@ -38,7 +39,7 @@ class SettingsStore(private val context: Context) {
     val orientationLock: Flow<Boolean> = context.settingsDataStore.data.map { it[ORIENTATION_LOCK] ?: false }
 
     /** Автовоспроизведение следующей серии */
-    val autoPlay: Flow<Boolean> = context.settingsDataStore.data.map { it[AUTO_PLAY] ?: false }
+    val autoPlay: Flow<Boolean> = context.settingsDataStore.data.map { it[AUTO_PLAY] ?: true }
 
     /** 0 = сетка, 1 = список */
     val viewType: Flow<Int> = context.settingsDataStore.data.map { it[VIEW_TYPE] ?: 0 }
@@ -82,6 +83,46 @@ class SettingsStore(private val context: Context) {
 
     suspend fun setApiEndpoint(value: String) {
         context.settingsDataStore.edit { it[API_ENDPOINT] = value }
+    }
+
+    /** Скачанные эпизоды: set из строк "key=contentUri". */
+    val downloadedEpisodes: Flow<Set<String>> =
+        context.settingsDataStore.data.map { it[DOWNLOADED_EPISODES] ?: emptySet() }
+
+    suspend fun getDownloadedEpisodes(): Set<String> =
+        context.settingsDataStore.data.first()[DOWNLOADED_EPISODES] ?: emptySet()
+
+    suspend fun isEpisodeDownloaded(key: String): Boolean =
+        context.settingsDataStore.data.first()[DOWNLOADED_EPISODES]
+            ?.any { it.startsWith("$key=") } == true
+
+    suspend fun setEpisodeDownloaded(key: String, uri: String) {
+        context.settingsDataStore.edit { prefs ->
+            val entries = prefs[DOWNLOADED_EPISODES]?.toMutableSet() ?: mutableSetOf()
+            entries.removeAll { it.startsWith("$key=") }
+            entries.add("$key=$uri")
+            prefs[DOWNLOADED_EPISODES] = entries
+        }
+    }
+
+    suspend fun removeEpisodeDownloaded(key: String): String? {
+        var removedUri: String? = null
+        context.settingsDataStore.edit { prefs ->
+            val entries = prefs[DOWNLOADED_EPISODES]?.toMutableSet() ?: return@edit
+            val entry = entries.firstOrNull { it.startsWith("$key=") }
+            removedUri = entry?.substringAfter('=')
+            entries.removeAll { it.startsWith("$key=") }
+            prefs[DOWNLOADED_EPISODES] = entries
+        }
+        return removedUri
+    }
+
+    /** Убирает отметки о всех скачанных сериях тайтла (любой источник). */
+    suspend fun removeDownloadedForRelease(releaseId: Int) {
+        context.settingsDataStore.edit { prefs ->
+            val entries = prefs[DOWNLOADED_EPISODES] ?: return@edit
+            prefs[DOWNLOADED_EPISODES] = entries.filterNot { it.startsWith("$releaseId:") }.toSet()
+        }
     }
 
     suspend fun getPlaybackPosition(key: String): Long {
@@ -133,7 +174,7 @@ class SettingsStore(private val context: Context) {
     companion object {
         const val DEFAULT_API_ENDPOINT = "api-s.anixsekai.com"
 
-        /** Доступные эндпоинты API Anixart (host -> подпись) */
+        /** Доступные эндпоинты API (host -> подпись) */
         val API_ENDPOINTS = listOf(
             "api-s.anixsekai.com" to "api-s.anixsekai.com (основной)",
             "api.anixart.app" to "api.anixart.app",

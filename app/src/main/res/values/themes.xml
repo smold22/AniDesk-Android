@@ -6,4 +6,20 @@
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
     </style>
+
+    <style name="Theme.AniDesk.Player" parent="Theme.Leanback">
+        <item name="android:colorPrimary">@color/player_red</item>
+        <item name="android:colorPrimaryDark">@color/player_red</item>
+        <item name="android:colorAccent">@color/player_red</item>
+        <item name="android:colorBackground">@color/player_background</item>
+        <item name="android:windowBackground">@color/player_background</item>
+        <item name="playbackControlsAutoHideTimeout">5000</item>
+        <item name="playbackControlsAutoHideTickleTimeout">5000</item>
+    </style>
+
+    <style name="AppTheme.Player.LeanbackWizard" parent="Theme.Leanback.GuidedStep">
+        <item name="guidedStepBackground">@color/player_guided_background</item>
+        <item name="guidedActionsBackground">@color/player_guided_background</item>
+        <item name="guidedActionsElevation">0dp</item>
+    </style>
 </resources>

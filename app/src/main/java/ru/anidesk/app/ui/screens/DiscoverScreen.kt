@@ -15,11 +15,6 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.GridItemSpan
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.HorizontalDivider
@@ -43,7 +38,9 @@ import ru.anidesk.app.core.network.Release
 import ru.anidesk.app.ui.components.ErrorBox
 import ru.anidesk.app.ui.components.LoadingIndicator
 import ru.anidesk.app.ui.components.ReleaseCard
+import ru.anidesk.app.ui.components.ReleaseGrid
 import ru.anidesk.app.ui.components.TabHeader
+import ru.anidesk.app.ui.components.isTv
 import ru.anidesk.app.ui.theme.Carmine
 import ru.anidesk.app.ui.theme.MainText
 
@@ -108,51 +105,28 @@ fun DiscoverScreen(
             loading -> LoadingIndicator()
             error != null -> ErrorBox(error!!)
             else -> {
-                val gridState = rememberLazyGridState()
-                LaunchedEffect(gridState) {
-                    snapshotFlow {
-                        val info = gridState.layoutInfo
-                        val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: 0
-                        lastVisible >= info.totalItemsCount - 3
-                    }.distinctUntilChanged().collect { nearEnd ->
-                        if (nearEnd) {
-                            loadMore(
-                                current = watching,
-                                currentPage = watchingPage,
-                                ended = watchingEnded,
-                                isLoading = watchingLoading,
-                                fetch = { api.discoverWatching(it).content },
-                                onLoading = { watchingLoading = it },
-                                onSuccess = { list, page, ended ->
-                                    watching = list
-                                    watchingPage = page
-                                    watchingEnded = ended
-                                },
-                            )
-                        }
-                    }
-                }
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(2),
-                    state = gridState,
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    if (watching.isNotEmpty()) {
-                        item(span = { GridItemSpan(maxLineSpan) }) {
-                            SectionTitle("Смотрят сейчас")
-                        }
-                        items(watching, key = { it.id }) { release ->
-                            ReleaseCard(release = release, onClick = { onOpenRelease(release.id) })
-                        }
-                    }
-                    if (recommendations.isNotEmpty()) {
-                        item(span = { GridItemSpan(maxLineSpan) }) {
+                ReleaseGrid(
+                    releases = watching,
+                    onOpenRelease = onOpenRelease,
+                    onLoadMore = {
+                        loadMore(
+                            current = watching,
+                            currentPage = watchingPage,
+                            ended = watchingEnded,
+                            isLoading = watchingLoading,
+                            fetch = { api.discoverWatching(it).content },
+                            onLoading = { watchingLoading = it },
+                            onSuccess = { list, page, ended ->
+                                watching = list
+                                watchingPage = page
+                                watchingEnded = ended
+                            },
+                        )
+                    },
+                    header = { SectionTitle("Смотрят сейчас") },
+                    footer = {
+                        if (recommendations.isNotEmpty()) {
                             SectionTitle("Рекомендации")
-                        }
-                        item(span = { GridItemSpan(maxLineSpan) }) {
                             PagedReleaseRow(
                                 releases = recommendations,
                                 onOpenRelease = onOpenRelease,
@@ -172,10 +146,7 @@ fun DiscoverScreen(
                                     )
                                 },
                             )
-                        }
-                    }
-                    if (watching.isEmpty() && recommendations.isEmpty()) {
-                        item(span = { GridItemSpan(maxLineSpan) }) {
+                        } else if (watching.isEmpty()) {
                             Box(
                                 Modifier.fillMaxWidth().padding(48.dp),
                                 contentAlignment = androidx.compose.ui.Alignment.Center,
@@ -183,8 +154,9 @@ fun DiscoverScreen(
                                 Text("Пока пусто", color = androidx.compose.ui.graphics.Color.Gray, fontSize = 14.sp)
                             }
                         }
-                    }
-                }
+                    },
+                    modifier = Modifier.fillMaxSize(),
+                )
             }
         }
     }
@@ -215,7 +187,7 @@ private fun PagedReleaseRow(
             ReleaseCard(
                 release = release,
                 onClick = { onOpenRelease(release.id) },
-                modifier = Modifier.width(110.dp),
+                modifier = Modifier.width(if (isTv()) 170.dp else 110.dp),
             )
         }
     }

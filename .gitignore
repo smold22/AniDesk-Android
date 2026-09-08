@@ -7,3 +7,17 @@ captures/
 .cxx/
 .idea/
 *.iml
+
+# Артефакты сборки/распаковки APK в корне
+/AndroidManifest.xml
+/DebugProbesKt.bin
+/META-INF/
+/app/release/
+/assets/
+/classes.dex
+/classes*.dex
+/kotlin/
+/lib/
+/res/
+/resources.arsc
+/replay_*.log

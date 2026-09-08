@@ -58,6 +58,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -66,6 +67,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackParameters
@@ -141,6 +144,8 @@ fun PlayerScreen(
     var defaultQuality by remember { mutableIntStateOf(0) }
     var rewindTimeSec by remember { mutableIntStateOf(10) }
     var resumePosition by remember { mutableStateOf<Long?>(null) }
+    var linkCandidates by remember { mutableStateOf<List<String>>(emptyList()) }
+    var candidateIndex by remember { mutableIntStateOf(0) }
 
     val dataSourceFactory = remember {
         DefaultHttpDataSource.Factory()
@@ -215,6 +220,17 @@ fun PlayerScreen(
             insetsController?.isAppearanceLightStatusBars = isLightTheme
             insetsController?.isAppearanceLightNavigationBars = isLightTheme
         }
+    }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) {
+                if (player.isPlaying) player.pause()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     DisposableEffect(isPlaying) {
@@ -294,13 +310,21 @@ fun PlayerScreen(
             )
             .build()
 
-    fun pickUrl(links: Map<String, String>, quality: Int): String? = when {
-        quality > 0 && links[quality.toString()] != null -> links[quality.toString()]
-        links["1080"] != null -> links["1080"]
-        links["720"] != null -> links["720"]
-        links["480"] != null -> links["480"]
-        links["360"] != null -> links["360"]
-        else -> links.values.firstOrNull()
+    fun pickUrl(links: Map<String, String>, quality: Int): String? =
+        ru.anidesk.app.player.PlayerQuality.pickUrl(links, quality)
+
+    fun orderedCandidates(links: Map<String, String>, quality: Int): List<String> {
+        val preferred = pickUrl(links, quality)
+        val others = links.entries
+            .filter { it.key != "auto" && it.value != preferred }
+            .sortedByDescending { it.key.filter(Char::isDigit).toIntOrNull() ?: 0 }
+            .map { it.value }
+        val master = links["auto"]
+        return buildList {
+            preferred?.let { add(it) }
+            addAll(others)
+            master?.let { add(it) }
+        }.distinct()
     }
 
     suspend fun playEpisode(ep: Episode) {
@@ -313,15 +337,21 @@ fun PlayerScreen(
                 return
             }
             links = parsed
-            val url = pickUrl(parsed, defaultQuality)
+            linkCandidates = orderedCandidates(parsed, defaultQuality)
+            candidateIndex = 0
+            val url = linkCandidates.firstOrNull()
             if (url == null) {
                 error = "Нет доступного качества"
                 return
             }
 
-            if (sourceName == "Sibnet") {
+            if (sourceName.contains("Sibnet", ignoreCase = true)) {
                 dataSourceFactory.setDefaultRequestProperties(
-                    mapOf("Referer" to ep.url, "Host" to "video.sibnet.ru")
+                    mapOf(
+                        "Referer" to "https://video.sibnet.ru/",
+                        "Origin" to "https://video.sibnet.ru",
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    )
                 )
             } else {
                 dataSourceFactory.setDefaultRequestProperties(emptyMap())
@@ -387,6 +417,18 @@ fun PlayerScreen(
             }
 
             override fun onPlayerError(errorException: androidx.media3.common.PlaybackException) {
+                val next = candidateIndex + 1
+                if (next < linkCandidates.size) {
+                    candidateIndex = next
+                    val ep = currentEpisode
+                    if (ep != null) {
+                        val url = linkCandidates[next]
+                        player.setMediaItem(buildMediaItem(url, ep))
+                        player.prepare()
+                        player.play()
+                        return
+                    }
+                }
                 playbackError = true
             }
         }
@@ -408,8 +450,8 @@ fun PlayerScreen(
     }
 
     LaunchedEffect(controlsVisible, locked, isPlaying) {
-        if (controlsVisible && !locked && isPlaying) {
-            delay(5000)
+        if (controlsVisible && isPlaying) {
+            delay(3000)
             controlsVisible = false
         }
     }
@@ -451,15 +493,14 @@ fun PlayerScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
-            .pointerInput(Unit) {
+            .pointerInput(locked) {
+                if (locked) return@pointerInput
                 detectHorizontalDragGestures(
                     onDragStart = {
-                        if (!locked) {
-                            seekStartPos = player.currentPosition
-                            dragAccum = 0f
-                            controlsVisible = false
-                            player.pause()
-                        }
+                        seekStartPos = player.currentPosition
+                        dragAccum = 0f
+                        controlsVisible = false
+                        player.pause()
                     },
                     onHorizontalDrag = { change, dragAmount ->
                         change.consume()
@@ -488,7 +529,7 @@ fun PlayerScreen(
                     },
                 )
             }
-            .clickable(enabled = !locked) {
+            .clickable {
                 controlsVisible = !controlsVisible
             },
     ) {
@@ -536,104 +577,106 @@ fun PlayerScreen(
         }
 
         // ---------- Верхняя панель ----------
-        if (controlsVisible && !locked) {
+        if (controlsVisible) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(Color.Black.copy(alpha = 0.6f))
+                    .background(Color.Black.copy(alpha = if (locked) 0.35f else 0.6f))
                     .statusBarsPadding()
                     .height(56.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(
-                    imageVector = Icons.Filled.Close,
-                    contentDescription = "Закрыть",
-                    tint = Color.White,
-                    modifier = Modifier
-                        .clickable {
-                            savePosition()
-                            onBack()
-                        }
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                )
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(start = 8.dp),
-                ) {
-                    Text(
-                        text = releaseTitle,
-                        color = Color.White,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                if (!locked) {
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = "Закрыть",
+                        tint = Color.White,
+                        modifier = Modifier
+                            .clickable {
+                                savePosition()
+                                onBack()
+                            }
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
                     )
-                    currentEpisode?.let {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(start = 8.dp),
+                    ) {
                         Text(
-                            text = it.name,
-                            color = Color(0xFFE0E0E0),
-                            fontSize = 13.sp,
+                            text = releaseTitle,
+                            color = Color.White,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Medium,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
+                        currentEpisode?.let {
+                            Text(
+                                text = it.name,
+                                color = Color(0xFFE0E0E0),
+                                fontSize = 13.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
                     }
-                }
-                SelectorChip(
-                    icon = { Icon(Icons.Filled.Speed, null, tint = Color.White, modifier = Modifier.size(18.dp)) },
-                    label = formatSpeed(SPEED_OPTIONS[speedIndex]),
-                    onClick = {},
-                ) {
-                    SPEED_OPTIONS.forEachIndexed { index, option ->
-                        DropdownMenuItem(
-                            text = { Text(formatSpeed(option)) },
-                            onClick = {
-                                speedIndex = index
-                                scope.launch { settingsStore.setPlaybackSpeed(index) }
-                            },
-                        )
+                    SelectorChip(
+                        icon = { Icon(Icons.Filled.Speed, null, tint = Color.White, modifier = Modifier.size(18.dp)) },
+                        label = formatSpeed(SPEED_OPTIONS[speedIndex]),
+                        onClick = {},
+                    ) {
+                        SPEED_OPTIONS.forEachIndexed { index, option ->
+                            DropdownMenuItem(
+                                text = { Text(formatSpeed(option)) },
+                                onClick = {
+                                    speedIndex = index
+                                    scope.launch { settingsStore.setPlaybackSpeed(index) }
+                                },
+                            )
+                        }
                     }
-                }
-                SelectorChip(
-                    icon = { Icon(Icons.Filled.AspectRatio, null, tint = Color.White, modifier = Modifier.size(18.dp)) },
-                    label = if (defaultQuality == 0) "Авто" else "${defaultQuality}p",
-                    onClick = {},
-                ) {
-                    val qualityItems = buildList {
-                        add(0 to "Авто")
-                        links.keys
-                            .mapNotNull { it.toIntOrNull() }
-                            .sortedDescending()
-                            .forEach { add(it to "${it}p") }
-                    }
-                    qualityItems.forEach { (quality, label) ->
-                        DropdownMenuItem(
-                            text = { Text(label) },
-                            onClick = {
-                                defaultQuality = quality
-                                scope.launch { settingsStore.setDefaultQuality(quality) }
-                                val ep = currentEpisode
-                                if (ep != null && links.isNotEmpty()) {
-                                    val pos = player.currentPosition
-                                    val url = pickUrl(links, quality)
-                                    if (url != null) {
-                                        player.setMediaItem(buildMediaItem(url, ep))
-                                        player.prepare()
-                                        player.seekTo(pos)
-                                        player.play()
-                                        positionMs = pos
+                    SelectorChip(
+                        icon = { Icon(Icons.Filled.AspectRatio, null, tint = Color.White, modifier = Modifier.size(18.dp)) },
+                        label = if (defaultQuality == 0) "Авто" else "${defaultQuality}p",
+                        onClick = {},
+                    ) {
+                        val qualityItems = buildList {
+                            add(0 to "Авто")
+                            links.keys
+                                .mapNotNull { it.toIntOrNull() }
+                                .sortedDescending()
+                                .forEach { add(it to "${it}p") }
+                        }
+                        qualityItems.forEach { (quality, label) ->
+                            DropdownMenuItem(
+                                text = { Text(label) },
+                                onClick = {
+                                    defaultQuality = quality
+                                    scope.launch { settingsStore.setDefaultQuality(quality) }
+                                    val ep = currentEpisode
+                                    if (ep != null && links.isNotEmpty()) {
+                                        val pos = player.currentPosition
+                                        val url = pickUrl(links, quality)
+                                        if (url != null) {
+                                            player.setMediaItem(buildMediaItem(url, ep))
+                                            player.prepare()
+                                            player.seekTo(pos)
+                                            player.play()
+                                            positionMs = pos
+                                        }
                                     }
-                                }
-                            },
-                        )
+                                },
+                            )
+                        }
                     }
                 }
                 Icon(
-                    imageVector = Icons.Filled.Lock,
-                    contentDescription = "Заблокировать",
+                    imageVector = if (locked) Icons.Filled.LockOpen else Icons.Filled.Lock,
+                    contentDescription = if (locked) "Разблокировать" else "Заблокировать",
                     tint = Color.White,
                     modifier = Modifier
-                        .clickable { locked = true }
+                        .clickable { locked = !locked }
                         .padding(horizontal = 12.dp, vertical = 8.dp),
                 )
             }
@@ -774,21 +817,6 @@ fun PlayerScreen(
         }
 
         // ---------- Экран блокировки ----------
-        if (locked) {
-            Icon(
-                imageVector = Icons.Filled.LockOpen,
-                contentDescription = "Разблокировать",
-                tint = Color.White,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .statusBarsPadding()
-                    .padding(12.dp)
-                    .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(50))
-                    .clickable { locked = false }
-                    .padding(10.dp),
-            )
-        }
-
         error?.let {
             Text(
                 text = it,
@@ -836,8 +864,21 @@ fun PlayerScreen(
         AlertDialog(
             onDismissRequest = { playbackError = false },
             title = { Text("Ошибка") },
-            text = { Text("Невозможно воспроизвести видео в выбранном плеере. Попробуйте использовать Веб-плеер.") },
+            text = { Text("Невозможно воспроизвести видео. Попробовать снова?") },
             confirmButton = {
+                TextButton(
+                    onClick = {
+                        playbackError = false
+                        val ep = currentEpisode
+                        if (ep != null) {
+                            scope.launch { playEpisode(ep) }
+                        } else {
+                            onBack()
+                        }
+                    },
+                ) { Text("Повторить") }
+            },
+            dismissButton = {
                 TextButton(onClick = { playbackError = false }) { Text("ОК") }
             },
         )

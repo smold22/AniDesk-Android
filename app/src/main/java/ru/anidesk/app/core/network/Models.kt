@@ -130,6 +130,8 @@ data class Release(
     @SerialName("profile_list_status") val profileListStatus: Int? = null,
     @SerialName("status_id") val statusId: Int = 0,
     @SerialName("last_view_timestamp") val lastViewTimestamp: Long = 0,
+    @SerialName("last_view_episode_name") val lastViewEpisodeName: String = "",
+    @SerialName("last_view_episode_type_name") val lastViewEpisodeTypeName: String = "",
     @SerialName("is_viewed") val isViewed: Boolean = false,
     @SerialName("is_favorite") val isFavorite: Boolean = false,
     @SerialName("related_releases") val relatedReleases: List<RelatedRelease> = emptyList(),
@@ -187,7 +189,7 @@ data class SourcesResponse(
 @Serializable
 data class Episode(
     @SerialName("@id") val atId: Int = 0,
-    @SerialName("id") val id: Int? = null,
+    @SerialName("id") val id: Long? = null,
     @SerialName("position") val position: Int = 0,
     @SerialName("name") val name: String = "",
     @SerialName("url") val url: String = "",
@@ -209,6 +211,13 @@ data class ReleaseFilterRequest(
     @SerialName("sort") val sort: Int = 0,
     @SerialName("status_id") val statusId: Int? = null,
     @SerialName("category_id") val categoryId: Int? = null,
+    @SerialName("country") val country: String? = null,
+    @SerialName("start_year") val startYear: Int? = null,
+    @SerialName("end_year") val endYear: Int? = null,
+    @SerialName("season") val season: Int? = null,
+    @SerialName("genres") val genres: List<String> = emptyList(),
+    @SerialName("types") val types: List<Int> = emptyList(),
+    @SerialName("age_ratings") val ageRatings: List<Int> = emptyList(),
 )
 
 @Serializable

@@ -1,0 +1,51 @@
+package ru.anidesk.app.player
+
+import kotlinx.coroutines.flow.MutableStateFlow
+import ru.anidesk.app.core.network.Dubber
+import ru.anidesk.app.core.network.Episode
+import ru.anidesk.app.core.network.Source
+
+class PlayerController {
+
+    val data = MutableStateFlow<PlayerData?>(null)
+
+    var selectedDubber: Dubber? = null
+
+    val selectEpisodeRelay = EventFlow<EpisodeId>()
+
+    val selectQualityRelay = EventFlow<Int>()
+
+    val selectDubberRelay = EventFlow<Dubber>()
+
+    fun reset() {
+        data.value = null
+    }
+
+    data class PlayerData(
+        val releaseId: Int,
+        val episodes: List<Episode>,
+        val dubbers: List<Dubber>,
+        val sources: List<Source>,
+        val currentEpisode: Episode?,
+        val currentDubberId: Int = 0,
+        val currentSourceId: Int,
+        val links: Map<String, String>,
+        val currentQuality: Int,
+    ) {
+        val selection: PlayerSelection
+            get() = PlayerSelection(
+                releaseId = releaseId,
+                dubberId = currentDubberId,
+                sourceId = currentSourceId,
+                sourceName = "",
+                episodePosition = currentEpisode?.position ?: 0,
+                quality = currentQuality,
+            )
+    }
+
+    data class EpisodeId(
+        val releaseId: Int,
+        val sourceId: Int,
+        val position: Int,
+    )
+}

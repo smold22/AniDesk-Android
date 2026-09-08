@@ -17,6 +17,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.DeleteSweep
@@ -45,15 +46,19 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import ru.anidesk.app.core.network.AnixartApi
 import ru.anidesk.app.core.settings.SettingsStore
+import ru.anidesk.app.ui.components.isTv
 import ru.anidesk.app.ui.theme.Carmine
 import ru.anidesk.app.ui.theme.MainText
 import ru.anidesk.app.ui.theme.SecondaryText
@@ -136,11 +141,13 @@ private fun SettingsMain(settingsStore: SettingsStore, onBack: () -> Unit, onOpe
                 title = "Воспроизведение",
                 onClick = { onOpen(1) },
             )
-            SettingsRow(
-                icon = Icons.Filled.Palette,
-                title = "Оформление",
-                onClick = { onOpen(2) },
-            )
+            if (!isTv()) {
+                SettingsRow(
+                    icon = Icons.Filled.Palette,
+                    title = "Оформление",
+                    onClick = { onOpen(2) },
+                )
+            }
             SettingsRow(
                 icon = Icons.Filled.Storage,
                 title = "Данные",
@@ -181,7 +188,7 @@ private fun SettingsMain(settingsStore: SettingsStore, onBack: () -> Unit, onOpe
                                 modifier = Modifier.weight(1f),
                             )
                             if (theme == value) {
-                                Text("✓", color = Carmine, fontSize = 16.sp)
+                                Icon(Icons.Filled.Check, contentDescription = null, tint = Carmine, modifier = Modifier.size(16.dp))
                             }
                         }
                     }
@@ -229,44 +236,50 @@ private fun PlaybackSettings(settingsStore: SettingsStore, onBack: () -> Unit) {
                 summary = QUALITY_OPTIONS.firstOrNull { it.first == quality }?.second ?: "",
                 onClick = { showQualityDialog = true },
             )
-            SettingsDivider()
-            SettingsRow(
-                icon = Icons.Filled.FastForward,
-                title = "Шаг перемотки",
-                summary = REWIND_OPTIONS.firstOrNull { it.first == rewindTime }?.second ?: "",
-                onClick = { showRewindDialog = true },
-            )
-            SettingsDivider()
-            SettingsRow(
-                icon = Icons.Filled.Fullscreen,
-                title = "Только горизонтальная ориентация",
-                summary = "В плеере разрешён только ландшафт",
-                trailing = {
-                    Switch(
-                        checked = orientationLock,
-                        onCheckedChange = {
-                            orientationLock = it
-                            scope.launch { settingsStore.setOrientationLock(it) }
-                        },
-                        colors = SwitchDefaults.colors(checkedTrackColor = Carmine),
-                    )
-                },
-            )
-            SettingsRow(
-                icon = Icons.Filled.PlayArrow,
-                title = "Автовоспроизведение",
-                summary = "Следующая серия запустится автоматически",
-                trailing = {
-                    Switch(
-                        checked = autoPlay,
-                        onCheckedChange = {
-                            autoPlay = it
-                            scope.launch { settingsStore.setAutoPlay(it) }
-                        },
-                        colors = SwitchDefaults.colors(checkedTrackColor = Carmine),
-                    )
-                },
-            )
+            if (!isTv()) {
+                SettingsDivider()
+                SettingsRow(
+                    icon = Icons.Filled.FastForward,
+                    title = "Шаг перемотки",
+                    summary = REWIND_OPTIONS.firstOrNull { it.first == rewindTime }?.second ?: "",
+                    onClick = { showRewindDialog = true },
+                )
+            }
+            if (!isTv()) {
+                SettingsDivider()
+                SettingsRow(
+                    icon = Icons.Filled.Fullscreen,
+                    title = "Только горизонтальная ориентация",
+                    summary = "В плеере разрешён только ландшафт",
+                    trailing = {
+                        Switch(
+                            checked = orientationLock,
+                            onCheckedChange = {
+                                orientationLock = it
+                                scope.launch { settingsStore.setOrientationLock(it) }
+                            },
+                            colors = SwitchDefaults.colors(checkedTrackColor = Carmine),
+                        )
+                    },
+                )
+            }
+            if (!isTv()) {
+                SettingsRow(
+                    icon = Icons.Filled.PlayArrow,
+                    title = "Автовоспроизведение",
+                    summary = "Следующая серия запустится автоматически",
+                    trailing = {
+                        Switch(
+                            checked = autoPlay,
+                            onCheckedChange = {
+                                autoPlay = it
+                                scope.launch { settingsStore.setAutoPlay(it) }
+                            },
+                            colors = SwitchDefaults.colors(checkedTrackColor = Carmine),
+                        )
+                    },
+                )
+            }
         }
     }
 
@@ -295,7 +308,7 @@ private fun PlaybackSettings(settingsStore: SettingsStore, onBack: () -> Unit) {
                                 modifier = Modifier.weight(1f),
                             )
                             if (quality == value) {
-                                Text("✓", color = Carmine, fontSize = 16.sp)
+                                Icon(Icons.Filled.Check, contentDescription = null, tint = Carmine, modifier = Modifier.size(16.dp))
                             }
                         }
                     }
@@ -332,7 +345,7 @@ private fun PlaybackSettings(settingsStore: SettingsStore, onBack: () -> Unit) {
                                 modifier = Modifier.weight(1f),
                             )
                             if (rewindTime == value) {
-                                Text("✓", color = Carmine, fontSize = 16.sp)
+                                Icon(Icons.Filled.Check, contentDescription = null, tint = Carmine, modifier = Modifier.size(16.dp))
                             }
                         }
                     }
@@ -401,7 +414,7 @@ private fun AppearanceSettings(settingsStore: SettingsStore, onBack: () -> Unit)
                                 modifier = Modifier.weight(1f),
                             )
                             if (viewType == value) {
-                                Text("✓", color = Carmine, fontSize = 16.sp)
+                                Icon(Icons.Filled.Check, contentDescription = null, tint = Carmine, modifier = Modifier.size(16.dp))
                             }
                         }
                     }
@@ -489,7 +502,7 @@ private fun DataSettings(api: AnixartApi, settingsStore: SettingsStore, onBack: 
                                 modifier = Modifier.weight(1f),
                             )
                             if (apiEndpoint == host) {
-                                Text("✓", color = Carmine, fontSize = 16.sp)
+                                Icon(Icons.Filled.Check, contentDescription = null, tint = Carmine, modifier = Modifier.size(16.dp))
                             }
                         }
                     }
@@ -527,7 +540,6 @@ private fun AboutSettings(onBack: () -> Unit) {
             Spacer(Modifier.width(0.dp))
             Text("Версия $version", fontSize = 14.sp, color = ThirdText)
             Text("Разработчик: Smold2", fontSize = 13.sp, color = ThirdText)
-            Text("Неофициальный клиент Anixart", fontSize = 13.sp, color = ThirdText)
         }
     }
 }
@@ -536,6 +548,8 @@ private fun AboutSettings(onBack: () -> Unit) {
 
 @Composable
 private fun ScreenTitle(title: String, onBack: (() -> Unit)? = null) {
+    val tv = isTv()
+    val backFocusRequester = remember { FocusRequester() }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -549,6 +563,7 @@ private fun ScreenTitle(title: String, onBack: (() -> Unit)? = null) {
                 tint = MainText,
                 modifier = Modifier
                     .clickable(onClick = onBack)
+                    .then(if (tv) Modifier.focusRequester(backFocusRequester) else Modifier)
                     .padding(horizontal = 12.dp, vertical = 8.dp),
             )
         } else {
@@ -561,10 +576,18 @@ private fun ScreenTitle(title: String, onBack: (() -> Unit)? = null) {
             color = MainText,
         )
     }
+    LaunchedEffect(Unit) {
+        if (tv) {
+            delay(150)
+            backFocusRequester.requestFocus()
+        }
+    }
 }
 
 @Composable
 private fun SubScreenHeader(title: String, onBack: () -> Unit) {
+    val tv = isTv()
+    val backFocusRequester = remember { FocusRequester() }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -577,6 +600,7 @@ private fun SubScreenHeader(title: String, onBack: () -> Unit) {
             tint = MainText,
             modifier = Modifier
                 .clickable(onClick = onBack)
+                .then(if (tv) Modifier.focusRequester(backFocusRequester) else Modifier)
                 .padding(horizontal = 12.dp, vertical = 8.dp),
         )
         Text(
@@ -585,6 +609,12 @@ private fun SubScreenHeader(title: String, onBack: () -> Unit) {
             fontWeight = FontWeight.Bold,
             color = MainText,
         )
+    }
+    LaunchedEffect(Unit) {
+        if (tv) {
+            delay(150)
+            backFocusRequester.requestFocus()
+        }
     }
 }
 
@@ -596,11 +626,17 @@ private fun SettingsRow(
     onClick: (() -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
 ) {
+    val tv = isTv()
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(enabled = onClick != null) { onClick?.invoke() }
-            .padding(horizontal = 16.dp, vertical = 14.dp),
+            .padding(
+                start = if (tv) 46.dp else 16.dp,
+                end = 16.dp,
+                top = 14.dp,
+                bottom = 14.dp,
+            ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(

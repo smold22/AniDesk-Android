@@ -15,8 +15,8 @@ android {
         applicationId = "ru.anidesk.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0-beta"
+        versionCode = 129
+        versionName = "1.2.9"
     }
 
     buildTypes {
@@ -66,7 +66,12 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.9.2")
     implementation("androidx.media3:media3-exoplayer-hls:1.9.2")
     implementation("androidx.media3:media3-ui:1.9.2")
+    implementation("androidx.media3:media3-ui-leanback:1.9.2")
     implementation("androidx.media3:media3-session:1.9.2")
+    implementation("androidx.media3:media3-muxer:1.9.2")
+    implementation("androidx.leanback:leanback:1.2.0")
+    implementation("androidx.fragment:fragment-ktx:1.8.9")
+    implementation("com.github.terrakok:cicerone:7.1")
 
     implementation("io.ktor:ktor-client-core:3.5.2")
     implementation("io.ktor:ktor-client-okhttp:3.5.2")

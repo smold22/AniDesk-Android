@@ -11,6 +11,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -21,6 +22,8 @@ import kotlinx.coroutines.flow.first
 import ru.anidesk.app.core.network.AnixartApi
 import ru.anidesk.app.core.network.SessionStore
 import ru.anidesk.app.core.settings.SettingsStore
+import ru.anidesk.app.player.PlayerActivity
+import ru.anidesk.app.ui.components.isTv
 import ru.anidesk.app.ui.screens.LoginScreen
 import ru.anidesk.app.ui.screens.PlayerScreen
 import ru.anidesk.app.ui.screens.ReleaseScreen
@@ -47,17 +50,30 @@ object Routes {
 @Composable
 fun AniDeskApp(api: AnixartApi, sessionStore: SessionStore, settingsStore: SettingsStore) {
     val navController = rememberNavController()
-    val token by sessionStore.token.collectAsStateWithLifecycle(initialValue = null)
-    var sessionReady by remember { mutableStateOf(false) }
+    var token by remember { mutableStateOf<String?>(null) }
+    var authSkipped by remember { mutableStateOf(false) }
+    var tokenLoaded by remember { mutableStateOf(false) }
+    var authSkippedLoaded by remember { mutableStateOf(false) }
+    val tv = isTv()
 
     LaunchedEffect(Unit) {
-        sessionStore.token.first()
-        sessionReady = true
+        sessionStore.token.collect {
+            token = it
+            tokenLoaded = true
+        }
     }
 
-    LaunchedEffect(token, sessionReady) {
-        if (!sessionReady) return@LaunchedEffect
+    LaunchedEffect(Unit) {
+        sessionStore.authSkipped.collect {
+            authSkipped = it
+            authSkippedLoaded = true
+        }
+    }
+
+    LaunchedEffect(token, tokenLoaded) {
+        if (!tokenLoaded) return@LaunchedEffect
         api.token = token
+        if (tv) return@LaunchedEffect
         if (token != null && navController.currentDestination?.route == Routes.LOGIN) {
             navController.navigate(Routes.MAIN) {
                 popUpTo(Routes.LOGIN) { inclusive = true }
@@ -70,7 +86,7 @@ fun AniDeskApp(api: AnixartApi, sessionStore: SessionStore, settingsStore: Setti
         }
     }
 
-    if (!sessionReady) {
+    if (!tokenLoaded || !authSkippedLoaded) {
         Box(
             Modifier
                 .fillMaxSize()
@@ -81,7 +97,7 @@ fun AniDeskApp(api: AnixartApi, sessionStore: SessionStore, settingsStore: Setti
 
     NavHost(
         navController = navController,
-        startDestination = if (token != null) Routes.MAIN else Routes.LOGIN,
+        startDestination = if (token != null || tv) Routes.MAIN else Routes.LOGIN,
     ) {
         composable(Routes.LOGIN) {
             LoginScreen(api = api, sessionStore = sessionStore)
@@ -92,6 +108,8 @@ fun AniDeskApp(api: AnixartApi, sessionStore: SessionStore, settingsStore: Setti
                 api = api,
                 sessionStore = sessionStore,
                 settingsStore = settingsStore,
+                token = token,
+                authSkipped = authSkipped,
                 onOpenSearch = { navController.navigate(Routes.SEARCH) },
                 onOpenRelease = { id -> navController.navigate(Routes.release(id)) },
             )
@@ -111,6 +129,7 @@ fun AniDeskApp(api: AnixartApi, sessionStore: SessionStore, settingsStore: Setti
             arguments = listOf(navArgument("releaseId") { type = NavType.IntType }),
         ) { backStackEntry ->
             val releaseId = backStackEntry.arguments?.getInt("releaseId") ?: 0
+            val context = LocalContext.current
             ReleaseScreen(
                 api = api,
                 settingsStore = settingsStore,
@@ -118,7 +137,11 @@ fun AniDeskApp(api: AnixartApi, sessionStore: SessionStore, settingsStore: Setti
                 onBack = { navController.popBackStack() },
                 onOpenRelease = { id -> navController.navigate(Routes.release(id)) },
                 onPlay = { id, dubber, source, position, sourceName ->
-                    navController.navigate(Routes.player(id, dubber, source, position, sourceName))
+                    if (tv) {
+                        PlayerActivity.start(context, id, dubber, source, position, sourceName)
+                    } else {
+                        navController.navigate(Routes.player(id, dubber, source, position, sourceName))
+                    }
                 },
             )
         }

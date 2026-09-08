@@ -4,6 +4,8 @@ import android.app.Application
 import coil3.ImageLoader
 import coil3.SingletonImageLoader
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
+import coil3.request.crossfade
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import ru.anidesk.app.core.network.AnixartApi
@@ -26,6 +28,8 @@ class AniDeskApplication : Application() {
         SingletonImageLoader.setUnsafe(
             ImageLoader.Builder(this)
                 .components { add(OkHttpNetworkFetcherFactory()) }
+                .crossfade(true)
+                .fetcherCoroutineContext(Dispatchers.IO.limitedParallelism(8))
                 .build()
         )
     }

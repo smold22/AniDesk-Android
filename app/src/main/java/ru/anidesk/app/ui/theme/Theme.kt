@@ -1,7 +1,9 @@
 package ru.anidesk.app.ui.theme
 
 import android.app.Activity
+import android.content.res.Configuration
 import android.graphics.drawable.ColorDrawable
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
@@ -12,8 +14,10 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
+import ru.anidesk.app.ui.components.FocusScaleIndication
 
 // ---- Статические акценты (одинаковы в обеих темах, палитра Anixart 8.5.2) ----
 val Carmine = Color(0xFFF04E4E)
@@ -151,7 +155,17 @@ fun AniDeskTheme(themeMode: Int = 0, content: @Composable () -> Unit) {
     ) {
         MaterialTheme(
             colorScheme = if (dark) DarkColors else LightColors,
-            content = content,
-        )
+        ) {
+            val isTv = LocalConfiguration.current.uiMode and
+                Configuration.UI_MODE_TYPE_MASK == Configuration.UI_MODE_TYPE_TELEVISION
+            if (isTv) {
+                CompositionLocalProvider(
+                    LocalIndication provides FocusScaleIndication(),
+                    content = content,
+                )
+            } else {
+                content()
+            }
+        }
     }
 }

@@ -2,6 +2,7 @@ package ru.anidesk.app.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,6 +22,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -49,19 +51,41 @@ fun releaseStatusColor(release: Release): Color {
 }
 
 @Composable
+fun PosterPlaceholder(modifier: Modifier = Modifier) {
+    Box(modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant))
+}
+
+@Composable
 fun ReleaseCard(
     release: Release,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    showInfo: Boolean = true,
+    posterAspectRatio: Float = 2f / 3f,
+    titleOverlay: Boolean = false,
+    onLongClick: (() -> Unit)? = null,
 ) {
-    Column(modifier = modifier.clickable(onClick = onClick)) {
+    Column(
+        modifier = modifier.then(
+            if (onLongClick != null) {
+                Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            } else {
+                Modifier.clickable(onClick = onClick)
+            }
+        )
+    ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(2f / 3f)
+                .aspectRatio(posterAspectRatio)
                 .clip(RoundedCornerShape(6.dp))
-                .background(Color.Black),
+                .background(MaterialTheme.colorScheme.surfaceVariant),
         ) {
+            PosterPlaceholder(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(6.dp)),
+            )
             AsyncImage(
                 model = release.image,
                 contentDescription = release.titleRu,
@@ -77,52 +101,63 @@ fun ReleaseCard(
                         .background(releaseStatusColor(release)),
                 )
             }
-            if (release.isFavorite) {
+            if (titleOverlay) {
                 Box(
                     modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(4.dp)
-                        .size(16.dp)
-                        .clip(RoundedCornerShape(50))
-                        .background(Color.Black.copy(alpha = 0.4f)),
-                    contentAlignment = Alignment.Center,
+                        .align(Alignment.BottomStart)
+                        .fillMaxWidth()
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.55f)),
+                            )
+                        )
+                        .padding(horizontal = 7.dp, vertical = 5.dp),
                 ) {
-                    Text("★", fontSize = 11.sp, color = BrightSun)
+                    Text(
+                        text = release.titleRu,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
             }
         }
-        Column(modifier = Modifier.padding(top = 6.dp, bottom = 4.dp)) {
-            Text(
-                text = release.titleRu,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(top = 2.dp),
-            ) {
+        if (showInfo) {
+            Column(modifier = Modifier.padding(top = 6.dp, bottom = 4.dp)) {
                 Text(
-                    text = Format.getEpisodeString(release),
-                    fontSize = 12.sp,
-                    color = SecondaryText,
-                    maxLines = 1,
+                    text = release.titleRu,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Text(
-                    text = " • ",
-                    fontSize = 12.sp,
-                    color = SecondaryText,
-                )
-                Text(
-                    text = String.format("%.1f", release.grade),
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = SecondaryText,
-                    maxLines = 1,
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(top = 2.dp),
+                ) {
+                    Text(
+                        text = Format.getEpisodeString(release),
+                        fontSize = 12.sp,
+                        color = SecondaryText,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = " • ",
+                        fontSize = 12.sp,
+                        color = SecondaryText,
+                    )
+                    Text(
+                        text = String.format("%.1f", release.grade),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = SecondaryText,
+                        maxLines = 1,
+                    )
+                }
             }
         }
     }
@@ -145,8 +180,13 @@ fun ReleaseListItem(
                 .width(86.dp)
                 .aspectRatio(2f / 3f)
                 .clip(RoundedCornerShape(6.dp))
-                .background(Color.Black),
+                .background(MaterialTheme.colorScheme.surfaceVariant),
         ) {
+            PosterPlaceholder(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(6.dp)),
+            )
             AsyncImage(
                 model = release.image,
                 contentDescription = release.titleRu,
