@@ -28,6 +28,10 @@ class SettingsStore(private val context: Context) {
     private val DUBBER_SOURCES = stringSetPreferencesKey("dubber_sources")
     private val API_ENDPOINT = stringPreferencesKey("api_endpoint")
     private val DOWNLOADED_EPISODES = stringSetPreferencesKey("downloaded_episodes")
+    private val NEW_EPISODES_ENABLED = booleanPreferencesKey("new_episodes_notifications_enabled")
+    private val EPISODE_BASELINE = stringSetPreferencesKey("episode_baseline")
+    private val NOTIFICATION_SEEN = stringSetPreferencesKey("notification_seen_ids")
+    private val NOTIFICATIONS_INITIALIZED = booleanPreferencesKey("notifications_initialized")
 
     /** 0 = системная, 1 = светлая, 2 = тёмная */
     val theme: Flow<Int> = context.settingsDataStore.data.map { it[THEME] ?: 0 }
@@ -47,8 +51,8 @@ class SettingsStore(private val context: Context) {
     /** Индекс скорости воспроизведения в SPEED_OPTIONS (по умолчанию 3 = 1.0x) */
     val playbackSpeed: Flow<Int> = context.settingsDataStore.data.map { it[PLAYBACK_SPEED] ?: 3 }
 
-    /** Шаг перемотки в секундах */
-    val rewindTime: Flow<Int> = context.settingsDataStore.data.map { it[REWIND_TIME] ?: 10 }
+    /** Интервал пропуска в секундах */
+    val rewindTime: Flow<Int> = context.settingsDataStore.data.map { it[REWIND_TIME] ?: 85 }
 
     /** Выбранный хост API Anixart */
     val apiEndpoint: Flow<String> = context.settingsDataStore.data.map { it[API_ENDPOINT] ?: DEFAULT_API_ENDPOINT }
@@ -83,6 +87,56 @@ class SettingsStore(private val context: Context) {
 
     suspend fun setApiEndpoint(value: String) {
         context.settingsDataStore.edit { it[API_ENDPOINT] = value }
+    }
+
+    /** Уведомления о новых сериях */
+    val newEpisodesEnabled: Flow<Boolean> =
+        context.settingsDataStore.data.map { it[NEW_EPISODES_ENABLED] ?: true }
+
+    suspend fun setNewEpisodesEnabled(value: Boolean) {
+        context.settingsDataStore.edit { it[NEW_EPISODES_ENABLED] = value }
+    }
+
+    /** Базовая линия серий: releaseId -> последний известный episodes_released. */
+    val episodeBaseline: Flow<Map<Int, Int>> =
+        context.settingsDataStore.data.map { prefs ->
+            prefs[EPISODE_BASELINE]
+                ?.mapNotNull { entry ->
+                    val id = entry.substringBefore('=').toIntOrNull() ?: return@mapNotNull null
+                    val count = entry.substringAfter('=', "").toIntOrNull() ?: return@mapNotNull null
+                    id to count
+                }
+                ?.toMap()
+                ?: emptyMap()
+        }
+
+    suspend fun setEpisodeBaseline(value: Map<Int, Int>) {
+        context.settingsDataStore.edit { prefs ->
+            prefs[EPISODE_BASELINE] = value.map { (id, count) -> "$id=$count" }.toSet()
+        }
+    }
+
+    /** id серверных уведомлений, которые уже были показаны (тип:notificationId). */
+    val notifiedNotificationIds: Flow<Set<String>> =
+        context.settingsDataStore.data.map { it[NOTIFICATION_SEEN] ?: emptySet() }
+
+    suspend fun getNotifiedNotificationIds(): Set<String> =
+        context.settingsDataStore.data.first()[NOTIFICATION_SEEN] ?: emptySet()
+
+    suspend fun setNotifiedNotificationIds(ids: Set<String>) {
+        context.settingsDataStore.edit { prefs ->
+            prefs[NOTIFICATION_SEEN] = ids
+        }
+    }
+
+    /** Прошла ли первая "молчаливая" инициализация фида уведомлений. */
+    val notificationsInitialized: Flow<Boolean> =
+        context.settingsDataStore.data.map { it[NOTIFICATIONS_INITIALIZED] ?: false }
+
+    suspend fun setNotificationsInitialized(value: Boolean) {
+        context.settingsDataStore.edit { prefs ->
+            prefs[NOTIFICATIONS_INITIALIZED] = value
+        }
     }
 
     /** Скачанные эпизоды: set из строк "key=contentUri". */

@@ -1,5 +1,9 @@
 package ru.anidesk.app.ui.navigation
 
+import android.Manifest
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -48,13 +52,41 @@ object Routes {
 }
 
 @Composable
-fun AniDeskApp(api: AnixartApi, sessionStore: SessionStore, settingsStore: SettingsStore) {
+fun AniDeskApp(
+    api: AnixartApi,
+    sessionStore: SessionStore,
+    settingsStore: SettingsStore,
+    notificationReleaseId: Int = 0,
+) {
     val navController = rememberNavController()
     var token by remember { mutableStateOf<String?>(null) }
     var authSkipped by remember { mutableStateOf(false) }
     var tokenLoaded by remember { mutableStateOf(false) }
     var authSkippedLoaded by remember { mutableStateOf(false) }
     val tv = isTv()
+    val context = LocalContext.current
+
+    var permissionRequested by remember { mutableStateOf(false) }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { }
+
+    LaunchedEffect(token) {
+        if (!tv && !permissionRequested && token != null && Build.VERSION.SDK_INT >= 33) {
+            permissionRequested = true
+            permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    LaunchedEffect(notificationReleaseId) {
+        if (notificationReleaseId > 0 &&
+            navController.currentDestination?.route != Routes.RELEASE
+        ) {
+            navController.navigate(Routes.release(notificationReleaseId)) {
+                launchSingleTop = true
+            }
+        }
+    }
 
     LaunchedEffect(Unit) {
         sessionStore.token.collect {

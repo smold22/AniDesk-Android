@@ -49,6 +49,7 @@ class PlayerViewModel(
     private var releaseTitle: String = ""
     private var autoPlayEnabled = false
     private var initialPendingResume = false
+    private var pendingResumeMs: Long = -1L
 
     private fun positionKey(episode: Episode): String =
         "${argExtra.releaseId}:${currentSource?.id ?: 0}:${episode.position}"
@@ -68,6 +69,11 @@ class PlayerViewModel(
         }
         viewModelScope.launch {
             settingsStore.autoPlay.collectLatest { autoPlayEnabled = it }
+        }
+        viewModelScope.launch {
+            settingsStore.rewindTime.collectLatest { seconds ->
+                playerController.skipIntervalMs.value = seconds * 1000L
+            }
         }
 
         playerController
@@ -290,6 +296,8 @@ class PlayerViewModel(
                 return@launch
             }
             val saved = settingsStore.getPlaybackPosition(positionKey(episode))
+            val resumeMs = if (pendingResumeMs >= 0) pendingResumeMs else saved
+            pendingResumeMs = -1
             val sourceName = currentSource?.name.orEmpty()
             val headers = if (sourceName.contains("Sibnet", ignoreCase = true)) {
                 mapOf(
@@ -303,7 +311,7 @@ class PlayerViewModel(
             qualityState.value = if (currentQuality == 0) "auto" else "${currentQuality}"
             val newVideo = Video(
                 url = url,
-                seek = if (resumePrompt) 0 else saved,
+                seek = if (resumePrompt) 0 else resumeMs,
                 title = releaseTitle,
                 subtitle = episode.name,
                 headers = headers,
@@ -324,6 +332,7 @@ class PlayerViewModel(
                 return
             }
             val pos = currentEpisode?.position ?: argExtra.startPosition
+            pendingResumeMs = playerController.currentPositionMs
             val res = api.getEpisodes(argExtra.releaseId, dubber.id, source.id).episodes
             currentDubbers = api.getDubbers(argExtra.releaseId).types
             currentDubberId = dubber.id

@@ -26,7 +26,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
@@ -204,13 +204,13 @@ fun PlayerScreen(
     val configuration = LocalConfiguration.current
     val isPortrait = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
     val isLightTheme = MaterialTheme.colorScheme.background.luminance() > 0.5f
-    DisposableEffect(isPortrait, isLightTheme) {
+    DisposableEffect(isPortrait, isLightTheme, controlsVisible, locked) {
         val insetsController = window?.let { WindowInsetsControllerCompat(it, it.decorView) }
         insetsController?.systemBarsBehavior =
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         insetsController?.isAppearanceLightStatusBars = false
         insetsController?.isAppearanceLightNavigationBars = false
-        if (isPortrait) {
+        if (isPortrait || (controlsVisible && !locked)) {
             insetsController?.show(WindowInsetsCompat.Type.systemBars())
         } else {
             insetsController?.hide(WindowInsetsCompat.Type.systemBars())
@@ -582,7 +582,7 @@ fun PlayerScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(Color.Black.copy(alpha = if (locked) 0.35f else 0.6f))
-                    .statusBarsPadding()
+                    .systemBarsPadding()
                     .height(56.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {

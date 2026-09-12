@@ -55,10 +55,14 @@ class VideoPlayerGlue(
 
     private val qualityAction = QualityAction(context)
     private val speedAction = SpeedAction(context)
+    private val skipAction = SkipAction(context)
     private val episodesAction = EpisodesAction(context)
     private val dubbersAction = DubbersAction(context)
 
     private var secondaryActionsAdapter: ArrayObjectAdapter? = null
+
+    /** Текущий интервал пропуска, мс — обновляется из PlayerViewModel */
+    var skipIntervalMs: Long = 85_000L
 
     override fun onCreatePrimaryActions(primaryActionsAdapter: ArrayObjectAdapter) {
         super.onCreatePrimaryActions(primaryActionsAdapter)
@@ -75,12 +79,14 @@ class VideoPlayerGlue(
         this.secondaryActionsAdapter = secondaryActionsAdapter
         secondaryActionsAdapter.add(qualityAction)
         secondaryActionsAdapter.add(speedAction)
+        secondaryActionsAdapter.add(skipAction)
     }
 
     override fun onActionClicked(action: Action) {
         when {
             action == qualityAction -> actionListener?.onQualityClick()
             action == speedAction -> actionListener?.onSpeedClick()
+            action == skipAction -> seekBy(skipIntervalMs)
             action == episodesAction -> actionListener?.onEpisodesClick()
             action == dubbersAction -> actionListener?.onDubberClick()
             action == rewindAction -> seekBy(-SEEK_STEP)

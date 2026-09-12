@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import ru.anidesk.app.core.network.AnixartApi
 import ru.anidesk.app.core.network.SessionStore
+import ru.anidesk.app.core.notifications.Notifications
 import ru.anidesk.app.core.settings.SettingsStore
 
 class AniDeskApplication : Application() {
@@ -32,5 +33,9 @@ class AniDeskApplication : Application() {
                 .fetcherCoroutineContext(Dispatchers.IO.limitedParallelism(8))
                 .build()
         )
+        val notifyEnabled = runBlocking { settingsStore.newEpisodesEnabled.first() }
+        if (notifyEnabled) {
+            Notifications.schedule(this)
+        }
     }
 }

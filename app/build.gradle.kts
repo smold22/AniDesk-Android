@@ -15,8 +15,8 @@ android {
         applicationId = "ru.anidesk.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 129
-        versionName = "1.2.9"
+        versionCode = 133
+        versionName = "1.3.3"
     }
 
     buildTypes {
@@ -52,6 +52,7 @@ dependencies {
 
     implementation("androidx.core:core-ktx:1.17.0")
     implementation("androidx.activity:activity-compose:1.11.0")
+    implementation("androidx.work:work-runtime-ktx:2.10.1")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.4")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.4")
     implementation("androidx.navigation:navigation-compose:2.9.8")

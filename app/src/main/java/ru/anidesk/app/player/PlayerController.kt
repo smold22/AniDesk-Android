@@ -11,6 +11,12 @@ class PlayerController {
 
     var selectedDubber: Dubber? = null
 
+    /** Текущая позиция воспроизведения (обновляется плеером) */
+    var currentPositionMs: Long = 0L
+
+    /** Интервал пропуска, мс (60_000 / 85_000 / 110_000) — обновляется из SettingsStore */
+    val skipIntervalMs = MutableStateFlow(85_000L)
+
     val selectEpisodeRelay = EventFlow<EpisodeId>()
 
     val selectQualityRelay = EventFlow<Int>()

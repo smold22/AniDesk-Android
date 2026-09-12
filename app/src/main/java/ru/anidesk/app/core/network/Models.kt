@@ -298,3 +298,41 @@ data class ScheduleResponse(
     @SerialName("saturday") val saturday: List<Release> = emptyList(),
     @SerialName("sunday") val sunday: List<Release> = emptyList(),
 )
+
+// ---------- Уведомления ----------
+// Формат ответов серверного фида уведомлений Anixart аналог AnixartM
+// (имена полей в API — snake_case), структура — как в NotificationApi AnixartM.
+
+@Serializable
+data class EpisodeNotification(
+    @SerialName("id") val id: Long = 0,
+    @SerialName("timestamp") val timestamp: Long = 0,
+    @SerialName("is_new") val isNew: Boolean = false,
+    @SerialName("is_pushed") val isPushed: Boolean = false,
+    @SerialName("profile") val profile: Profile? = null,
+    @SerialName("episode") val episode: NotificationEpisode? = null,
+)
+
+@Serializable
+data class NotificationEpisode(
+    @SerialName("id") val id: Long = 0,
+    @SerialName("name") val name: String = "",
+    @SerialName("position") val position: Int = 0,
+    @SerialName("release_id") val releaseId: Long = 0,
+    @SerialName("source_id") val sourceId: Long = 0,
+    @SerialName("added_date") val addedDate: Long = 0,
+    @SerialName("iframe") val iframe: Boolean = false,
+    @SerialName("is_filler") val isFiller: Boolean = false,
+    @SerialName("is_watched") val isWatched: Boolean = false,
+    @SerialName("release") val release: Release? = null,
+)
+
+@Serializable
+data class RelatedReleaseNotification(
+    @SerialName("id") val id: Long = 0,
+    @SerialName("timestamp") val timestamp: Long = 0,
+    @SerialName("is_new") val isNew: Boolean = false,
+    @SerialName("is_pushed") val isPushed: Boolean = false,
+    @SerialName("profile") val profile: Profile? = null,
+    @SerialName("release") val release: Release? = null,
+)

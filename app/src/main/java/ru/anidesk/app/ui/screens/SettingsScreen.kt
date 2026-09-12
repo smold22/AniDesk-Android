@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PlayCircle
@@ -57,6 +58,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import ru.anidesk.app.core.network.AnixartApi
+import ru.anidesk.app.core.notifications.Notifications
 import ru.anidesk.app.core.settings.SettingsStore
 import ru.anidesk.app.ui.components.isTv
 import ru.anidesk.app.ui.theme.Carmine
@@ -84,11 +86,9 @@ private val VIEW_TYPE_OPTIONS = listOf(
 )
 
 private val REWIND_OPTIONS = listOf(
-    5 to "5 секунд",
-    10 to "10 секунд",
-    15 to "15 секунд",
-    20 to "20 секунд",
-    30 to "30 секунд",
+    60 to "1 минута",
+    85 to "1 минута 25 секунд",
+    110 to "1 минута 50 секунд",
 )
 
 @Composable
@@ -109,14 +109,17 @@ fun SettingsScreen(api: AnixartApi, settingsStore: SettingsStore, onBack: () -> 
 @Composable
 private fun SettingsMain(settingsStore: SettingsStore, onBack: () -> Unit, onOpen: (Int) -> Unit) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     var theme by remember { mutableIntStateOf(0) }
     var showThemeDialog by remember { mutableStateOf(false) }
+    var newEpisodesEnabled by remember { mutableStateOf(true) }
     val version = remember {
         ru.anidesk.app.BuildConfig.VERSION_NAME
     }
 
     LaunchedEffect(Unit) {
         theme = settingsStore.theme.first()
+        newEpisodesEnabled = settingsStore.newEpisodesEnabled.first()
     }
 
     Column(
@@ -153,6 +156,26 @@ private fun SettingsMain(settingsStore: SettingsStore, onBack: () -> Unit, onOpe
                 title = "Данные",
                 onClick = { onOpen(3) },
             )
+            if (!isTv()) {
+                SettingsDivider()
+                SettingsRow(
+                    icon = Icons.Filled.Notifications,
+                    title = "Уведомления",
+                    trailing = {
+                        Switch(
+                            checked = newEpisodesEnabled,
+                            onCheckedChange = {
+                                newEpisodesEnabled = it
+                                scope.launch {
+                                    settingsStore.setNewEpisodesEnabled(it)
+                                    if (it) Notifications.schedule(context) else Notifications.cancel(context)
+                                }
+                            },
+                            colors = SwitchDefaults.colors(checkedTrackColor = Carmine),
+                        )
+                    },
+                )
+            }
             SettingsDivider()
             SettingsRow(
                 icon = Icons.Filled.Info,
@@ -236,15 +259,13 @@ private fun PlaybackSettings(settingsStore: SettingsStore, onBack: () -> Unit) {
                 summary = QUALITY_OPTIONS.firstOrNull { it.first == quality }?.second ?: "",
                 onClick = { showQualityDialog = true },
             )
-            if (!isTv()) {
-                SettingsDivider()
-                SettingsRow(
-                    icon = Icons.Filled.FastForward,
-                    title = "Шаг перемотки",
-                    summary = REWIND_OPTIONS.firstOrNull { it.first == rewindTime }?.second ?: "",
-                    onClick = { showRewindDialog = true },
-                )
-            }
+            SettingsDivider()
+            SettingsRow(
+                icon = Icons.Filled.FastForward,
+                title = "Пропуск",
+                summary = REWIND_OPTIONS.firstOrNull { it.first == rewindTime }?.second ?: "",
+                onClick = { showRewindDialog = true },
+            )
             if (!isTv()) {
                 SettingsDivider()
                 SettingsRow(
@@ -323,7 +344,7 @@ private fun PlaybackSettings(settingsStore: SettingsStore, onBack: () -> Unit) {
     if (showRewindDialog) {
         AlertDialog(
             onDismissRequest = { showRewindDialog = false },
-            title = { Text("Шаг перемотки") },
+            title = { Text("Пропуск") },
             text = {
                 Column {
                     REWIND_OPTIONS.forEach { (value, label) ->

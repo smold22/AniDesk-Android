@@ -246,6 +246,13 @@ class AnixartApi(
 
     suspend fun notificationCount(): NotificationCountResponse = apiGet("/notification/count")
 
+    /** Серверный фид уведомлений (1-индексированные страницы, как в AnixartM). */
+    suspend fun notificationEpisodes(page: Int): PageableResponse<EpisodeNotification> =
+        apiGet("/notification/episodes/$page")
+
+    suspend fun notificationRelatedReleases(page: Int): PageableResponse<RelatedReleaseNotification> =
+        apiGet("/notification/related/release/$page")
+
     // ---------- Internals ----------
 
     private suspend inline fun <reified T> apiGet(path: String, params: Map<String, String> = emptyMap()): T {

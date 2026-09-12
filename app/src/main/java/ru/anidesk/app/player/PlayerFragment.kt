@@ -90,6 +90,10 @@ class PlayerFragment : BasePlayerFragment() {
             playerGlue?.setQualityLabel(if (it == "auto") "Авто" else "${it}p")
         }
 
+        subscribeTo((requireActivity() as PlayerActivity).playerController.skipIntervalMs) {
+            playerGlue?.skipIntervalMs = it
+        }
+
         subscribeTo(viewModel.loading) {
             if (it) {
                 progressBarManager.show()
@@ -106,9 +110,12 @@ class PlayerFragment : BasePlayerFragment() {
         }
 
         viewLifecycleOwner.lifecycleScope.launch {
+            var ticks = 0
             while (isActive) {
-                delay(5000)
-                viewModel.savePosition(getPosition())
+                val position = getPosition()
+                (requireActivity() as PlayerActivity).playerController.currentPositionMs = position
+                if (++ticks % 10 == 0) viewModel.savePosition(position)
+                delay(500)
             }
         }
     }
