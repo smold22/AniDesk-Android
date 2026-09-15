@@ -149,7 +149,7 @@ fun ProfileScreen(
                             onClick = {
                                 scope.launch { sessionStore.clear() }
                             },
-                            shape = RoundedCornerShape(10.dp),
+                            shape = RoundedCornerShape(8.dp),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = AltBackground,
                                 contentColor = Carmine,
@@ -220,7 +220,7 @@ private fun GuestLoginState(onOpenLogin: () -> Unit) {
         Spacer(Modifier.height(20.dp))
         Button(
             onClick = onOpenLogin,
-            shape = RoundedCornerShape(12.dp),
+            shape = RoundedCornerShape(8.dp),
             colors = ButtonDefaults.buttonColors(containerColor = Carmine),
         ) {
             Text("Войти", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)

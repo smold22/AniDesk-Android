@@ -1,5 +1,7 @@
 package ru.anidesk.app.ui.screens
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
@@ -29,9 +31,11 @@ import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material.icons.filled.Update
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -52,14 +56,20 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import ru.anidesk.app.core.network.AnixartApi
 import ru.anidesk.app.core.notifications.Notifications
 import ru.anidesk.app.core.settings.SettingsStore
+import ru.anidesk.app.core.update.UpdateManager
+import ru.anidesk.app.core.update.UpdateStatus
 import ru.anidesk.app.ui.components.isTv
 import ru.anidesk.app.ui.theme.Carmine
 import ru.anidesk.app.ui.theme.MainText
@@ -94,13 +104,15 @@ private val REWIND_OPTIONS = listOf(
 @Composable
 fun SettingsScreen(api: AnixartApi, settingsStore: SettingsStore, onBack: () -> Unit) {
     var screen by remember { mutableIntStateOf(0) }
+    val appContext = LocalContext.current.applicationContext
+    val updateManager = remember { UpdateManager(appContext) }
 
     when (screen) {
         0 -> SettingsMain(settingsStore, onBack = onBack, onOpen = { screen = it })
         1 -> PlaybackSettings(settingsStore, onBack = { screen = 0 })
         2 -> AppearanceSettings(settingsStore, onBack = { screen = 0 })
         3 -> DataSettings(api, settingsStore, onBack = { screen = 0 })
-        else -> AboutSettings(onBack = { screen = 0 })
+        else -> AboutSettings(updateManager, onBack = { screen = 0 })
     }
 }
 
@@ -539,8 +551,20 @@ private fun DataSettings(api: AnixartApi, settingsStore: SettingsStore, onBack: 
 // ---------- О приложении ----------
 
 @Composable
-private fun AboutSettings(onBack: () -> Unit) {
+private fun AboutSettings(updateManager: UpdateManager, onBack: () -> Unit) {
     val version = remember { ru.anidesk.app.BuildConfig.VERSION_NAME }
+    val status by updateManager.status.collectAsStateWithLifecycle()
+
+    @Composable
+    fun statusSummary(): String? = when (status) {
+        UpdateStatus.Idle -> null
+        UpdateStatus.Checking -> "Проверка обновлений…"
+        UpdateStatus.UpToDate -> "У вас последняя версия"
+        is UpdateStatus.Available -> "Доступна версия ${(status as UpdateStatus.Available).info.versionName}"
+        is UpdateStatus.Failed -> "Ошибка проверки"
+        is UpdateStatus.Downloading -> "Скачивание обновления…"
+        is UpdateStatus.Ready -> "Обновление скачано"
+    }
 
     Column(
         modifier = Modifier
@@ -562,6 +586,186 @@ private fun AboutSettings(onBack: () -> Unit) {
             Text("Версия $version", fontSize = 14.sp, color = ThirdText)
             Text("Разработчик: Smold2", fontSize = 13.sp, color = ThirdText)
         }
+
+        HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant, thickness = 1.dp)
+        SettingsRow(
+            icon = Icons.Filled.Update,
+            title = "Проверить обновления",
+            summary = statusSummary(),
+            onClick = { updateManager.checkForUpdates() },
+        )
+    }
+
+    UpdateDialogs(updateManager)
+}
+
+@Composable
+private fun UpdateDialogs(manager: UpdateManager) {
+    val context = LocalContext.current
+    val version = remember { ru.anidesk.app.BuildConfig.VERSION_NAME }
+    val status by manager.status.collectAsStateWithLifecycle()
+    val promptVersion by manager.promptVersion.collectAsStateWithLifecycle()
+    val installPrompt by manager.installPrompt.collectAsStateWithLifecycle()
+    val permissionPrompt by manager.permissionPrompt.collectAsStateWithLifecycle()
+    var readyDismissed by remember { mutableStateOf(false) }
+
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        manager.retryPendingInstall()
+    }
+
+    LaunchedEffect(status) {
+        if (status !is UpdateStatus.Ready) {
+            readyDismissed = false
+            manager.dismissInstallPrompt()
+        }
+    }
+
+    if (permissionPrompt) {
+        AlertDialog(
+            onDismissRequest = { manager.dismissPermissionPrompt() },
+            title = { Text("Разрешить установку") },
+            text = {
+                Text(
+                    "Для установки обновления разрешите приложению AniDesk установку из неизвестных источников. Переключатель появится в открывшихся настройках.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { manager.openInstallSourceSettings() }) {
+                    Text("Открыть настройки")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { manager.dismissPermissionPrompt() }) {
+                    Text("Позже")
+                }
+            },
+        )
+    }
+
+    val available = status as? UpdateStatus.Available
+    if (available != null && promptVersion != null) {
+        AlertDialog(
+            onDismissRequest = { manager.dismissPrompt() },
+            title = { Text("Доступно обновление ${available.info.versionName}") },
+            text = {
+                Column {
+                    Text(
+                        "Установленная версия: $version",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ThirdText,
+                    )
+                    Text(
+                        available.info.changelog.ifBlank { "Описание изменений отсутствует." },
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.verticalScroll(rememberScrollState()),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { manager.download(available.info) }) {
+                    Text("Скачать")
+                }
+            },
+            dismissButton = {
+                Row {
+                    if (available.info.releaseUrl.isNotEmpty()) {
+                        TextButton(
+                            onClick = {
+                                runCatching {
+                                    context.startActivity(
+                                        Intent(Intent.ACTION_VIEW, Uri.parse(available.info.releaseUrl))
+                                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                                    )
+                                }
+                            },
+                        ) {
+                            Text("GitHub")
+                        }
+                    }
+                    TextButton(onClick = { manager.dismissPrompt() }) {
+                        Text("Позже")
+                    }
+                }
+            },
+        )
+    }
+
+    when (val s = status) {
+        is UpdateStatus.Downloading -> {
+            AlertDialog(
+                onDismissRequest = {},
+                title = { Text("Скачивание обновления") },
+                text = {
+                    Column {
+                        if (s.percent >= 0) {
+                            LinearProgressIndicator(
+                                progress = { s.percent / 100f },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Text(
+                                "${s.percent}%",
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        } else {
+                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                            Text(
+                                "Загрузка…",
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
+                },
+                confirmButton = {},
+            )
+        }
+        is UpdateStatus.Ready -> {
+            if (installPrompt || !readyDismissed) {
+                AlertDialog(
+                    onDismissRequest = {
+                        readyDismissed = true
+                        manager.dismissInstallPrompt()
+                    },
+                    title = { Text("Обновление скачано") },
+                    text = { Text("Установить скачанную версию? Системный установщик откроется поверх приложения.") },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                readyDismissed = true
+                                manager.dismissInstallPrompt()
+                                manager.install(s.file)
+                            },
+                        ) {
+                            Text("Установить")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(
+                            onClick = {
+                                readyDismissed = true
+                                manager.dismissInstallPrompt()
+                            },
+                        ) {
+                            Text("Позже")
+                        }
+                    },
+                )
+            }
+        }
+        is UpdateStatus.Failed -> {
+            AlertDialog(
+                onDismissRequest = { manager.dismissFailed() },
+                title = { Text("Ошибка") },
+                text = { Text(s.message) },
+                confirmButton = {
+                    TextButton(onClick = { manager.dismissFailed() }) {
+                        Text("ОК")
+                    }
+                },
+            )
+        }
+        else -> Unit
     }
 }
 

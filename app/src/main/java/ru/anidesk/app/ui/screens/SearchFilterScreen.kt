@@ -365,7 +365,7 @@ private fun TvSelectableRow(
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val focused by interactionSource.collectIsFocusedAsState()
-    val shape = RoundedCornerShape(10.dp)
+    val shape = RoundedCornerShape(8.dp)
     val backgroundColor = when {
         focused -> Carmine
         selected -> Carmine.copy(alpha = 0.15f)

@@ -51,6 +51,7 @@ import ru.anidesk.app.ui.screens.DiscoverScreen
 import ru.anidesk.app.ui.screens.FavoritesScreen
 import ru.anidesk.app.ui.screens.HistoryScreen
 import ru.anidesk.app.ui.screens.HomeScreen
+import ru.anidesk.app.ui.screens.NotificationsScreen
 import ru.anidesk.app.ui.screens.ProfileScreen
 import ru.anidesk.app.ui.screens.SettingsScreen
 import ru.anidesk.app.ui.theme.Carmine
@@ -308,6 +309,16 @@ private fun MainNavHost(
                 settingsStore = settingsStore,
                 onOpenRelease = onOpenRelease,
                 onOpenSearch = onOpenSearch,
+                onOpenNotifications = {
+                    navController.navigate("notifications") { launchSingleTop = true }
+                },
+            )
+        }
+        composable("notifications") {
+            NotificationsScreen(
+                api = api,
+                onOpenRelease = onOpenRelease,
+                onBack = { navController.popBackStack() },
             )
         }
         composable("discover") {

@@ -16,13 +16,12 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -34,9 +33,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -178,24 +180,41 @@ fun SearchScreen(
                     .clickable(onClick = onBack)
                     .padding(horizontal = 10.dp, vertical = 6.dp),
             )
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                placeholder = { Text("Поиск релизов", color = ThirdText) },
-                singleLine = true,
-                shape = RoundedCornerShape(8.dp),
+            Row(
                 modifier = Modifier
                     .weight(1f)
+                    .height(48.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(AltBackground)
                     .then(if (tv) Modifier.focusRequester(searchFocusRequester) else Modifier)
-                    .onFocusChanged { searchFocused = it.isFocused },
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = Carmine,
-                    unfocusedBorderColor = AltBackground,
-                    cursorColor = Carmine,
-                    focusedContainerColor = AltBackground,
-                    unfocusedContainerColor = AltBackground,
-                ),
-            )
+                    .onFocusChanged { searchFocused = it.isFocused }
+                    .padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                BasicTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    singleLine = true,
+                    textStyle = TextStyle(color = MainText, fontSize = 16.sp),
+                    cursorBrush = SolidColor(Carmine),
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    decorationBox = { innerTextField ->
+                        Box {
+                            if (query.isEmpty()) {
+                                Text(
+                                    text = "Поиск релизов",
+                                    color = ThirdText,
+                                    fontSize = 16.sp,
+                                    maxLines = 1,
+                                )
+                            }
+                            innerTextField()
+                        }
+                    },
+                )
+            }
             Icon(
                 imageVector = Icons.Filled.Tune,
                 contentDescription = "Фильтр",

@@ -5,7 +5,9 @@ import android.content.res.Configuration
 import android.graphics.drawable.ColorDrawable
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
@@ -16,6 +18,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import ru.anidesk.app.ui.components.FocusScaleIndication
 
@@ -133,6 +136,12 @@ private val LightColors = lightColorScheme(
     surfaceContainerHighest = Color(0xFFE0E0E0),
 )
 
+private val AniShapes = Shapes(
+    small = RoundedCornerShape(8.dp),
+    medium = RoundedCornerShape(8.dp),
+    large = RoundedCornerShape(8.dp),
+)
+
 @Composable
 fun AniDeskTheme(themeMode: Int = 0, content: @Composable () -> Unit) {
     val dark = when (themeMode) {
@@ -155,6 +164,7 @@ fun AniDeskTheme(themeMode: Int = 0, content: @Composable () -> Unit) {
     ) {
         MaterialTheme(
             colorScheme = if (dark) DarkColors else LightColors,
+            shapes = AniShapes,
         ) {
             val isTv = LocalConfiguration.current.uiMode and
                 Configuration.UI_MODE_TYPE_MASK == Configuration.UI_MODE_TYPE_TELEVISION

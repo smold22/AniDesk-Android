@@ -12,6 +12,7 @@ import ru.anidesk.app.core.network.AnixartApi
 import ru.anidesk.app.core.network.SessionStore
 import ru.anidesk.app.core.notifications.Notifications
 import ru.anidesk.app.core.settings.SettingsStore
+import java.io.File
 
 class AniDeskApplication : Application() {
 
@@ -33,9 +34,16 @@ class AniDeskApplication : Application() {
                 .fetcherCoroutineContext(Dispatchers.IO.limitedParallelism(8))
                 .build()
         )
+        cleanUpdateCache()
         val notifyEnabled = runBlocking { settingsStore.newEpisodesEnabled.first() }
         if (notifyEnabled) {
             Notifications.schedule(this)
+        }
+    }
+
+    private fun cleanUpdateCache() {
+        runCatching {
+            File(cacheDir, "apk").deleteRecursively()
         }
     }
 }

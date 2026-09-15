@@ -1,4 +1,4 @@
-package ru.anidesk.app.ui.screens
+﻿package ru.anidesk.app.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -560,7 +560,7 @@ private fun ChoiceButton(
     focusRequester: FocusRequester? = null,
 ) {
     var focused by remember { mutableStateOf(false) }
-    val shape = RoundedCornerShape(14.dp)
+    val shape = RoundedCornerShape(8.dp)
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -641,7 +641,7 @@ private fun FormStep(
                 .fillMaxWidth()
                 .height(50.dp)
                 .focusRequester(submitFocus),
-            shape = RoundedCornerShape(12.dp),
+            shape = RoundedCornerShape(8.dp),
             colors = ButtonDefaults.buttonColors(containerColor = PlayerRed),
         ) {
             if (loading) {
@@ -692,7 +692,7 @@ private fun AuthField(
             .fillMaxWidth()
             .focusRequester(focusRequester)
             .onFocusChanged(onFocusChanged),
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(8.dp),
         keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
         colors = OutlinedTextFieldDefaults.colors(
             focusedBorderColor = PlayerRed,

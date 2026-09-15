@@ -1,4 +1,4 @@
-package ru.anidesk.app.ui.screens
+﻿package ru.anidesk.app.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -144,7 +144,7 @@ fun LoginScreen(api: AnixartApi, sessionStore: SessionStore) {
                 .fillMaxWidth()
                 .then(if (tv) Modifier.focusRequester(loginFocusRequester) else Modifier)
                 .onFocusChanged { loginFocused = it.isFocused },
-            shape = RoundedCornerShape(12.dp),
+            shape = RoundedCornerShape(8.dp),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
             colors = OutlinedTextFieldDefaults.colors(
                 focusedBorderColor = PlayerRed,
@@ -163,7 +163,7 @@ fun LoginScreen(api: AnixartApi, sessionStore: SessionStore) {
                 label = { Text("Почта") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(8.dp),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedBorderColor = PlayerRed,
@@ -187,7 +187,7 @@ fun LoginScreen(api: AnixartApi, sessionStore: SessionStore) {
                     .fillMaxWidth()
                     .then(if (tv) Modifier.focusRequester(passwordFocusRequester) else Modifier)
                     .onFocusChanged { passwordFocused = it.isFocused },
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(8.dp),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedBorderColor = PlayerRed,
@@ -208,7 +208,7 @@ fun LoginScreen(api: AnixartApi, sessionStore: SessionStore) {
                 singleLine = true,
                 visualTransformation = PasswordVisualTransformation(),
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(8.dp),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedBorderColor = PlayerRed,
@@ -228,7 +228,7 @@ fun LoginScreen(api: AnixartApi, sessionStore: SessionStore) {
                 label = { Text("Код из письма") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(8.dp),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedBorderColor = PlayerRed,
@@ -415,7 +415,7 @@ fun LoginScreen(api: AnixartApi, sessionStore: SessionStore) {
                 .fillMaxWidth()
                 .height(50.dp)
                 .then(if (tv) Modifier.focusRequester(submitFocusRequester) else Modifier),
-            shape = RoundedCornerShape(12.dp),
+            shape = RoundedCornerShape(8.dp),
             colors = ButtonDefaults.buttonColors(containerColor = PlayerRed),
         ) {
             if (loading) {
