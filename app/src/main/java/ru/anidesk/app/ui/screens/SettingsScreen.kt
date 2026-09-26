@@ -1,0 +1,890 @@
+package ru.anidesk.app.ui.screens
+
+import android.content.Intent
+import android.net.Uri
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.FastForward
+import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.PlayCircle
+import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material.icons.filled.Update
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import ru.anidesk.app.core.network.AnixartApi
+import ru.anidesk.app.core.notifications.Notifications
+import ru.anidesk.app.core.settings.SettingsStore
+import ru.anidesk.app.core.update.UpdateManager
+import ru.anidesk.app.core.update.UpdateStatus
+import ru.anidesk.app.ui.components.HeaderIconButton
+import ru.anidesk.app.ui.theme.Carmine
+import ru.anidesk.app.ui.theme.OnCarmine
+import ru.anidesk.app.ui.theme.MainText
+import ru.anidesk.app.ui.theme.SecondaryText
+import ru.anidesk.app.ui.theme.ThirdText
+
+private val THEME_OPTIONS = listOf(
+    0 to "Системная",
+    1 to "Светлая",
+    2 to "Тёмная",
+)
+
+private val QUALITY_OPTIONS = listOf(
+    0 to "Авто",
+    1080 to "1080p",
+    720 to "720p",
+    480 to "480p",
+    360 to "360p",
+)
+
+private val VIEW_TYPE_OPTIONS = listOf(
+    0 to "Сетка",
+    1 to "Список",
+)
+
+private val REWIND_OPTIONS = listOf(
+    60 to "1 минута",
+    85 to "1 минута 25 секунд",
+    110 to "1 минута 50 секунд",
+)
+
+@Composable
+fun SettingsScreen(api: AnixartApi, settingsStore: SettingsStore, onBack: () -> Unit) {
+    var screen by remember { mutableIntStateOf(0) }
+    val appContext = LocalContext.current.applicationContext
+    val updateManager = remember { UpdateManager(appContext) }
+
+    when (screen) {
+        0 -> SettingsMain(settingsStore, onBack = onBack, onOpen = { screen = it })
+        1 -> PlaybackSettings(settingsStore, onBack = { screen = 0 })
+        2 -> AppearanceSettings(settingsStore, onBack = { screen = 0 })
+        3 -> DataSettings(api, settingsStore, onBack = { screen = 0 })
+        else -> AboutSettings(updateManager, onBack = { screen = 0 })
+    }
+}
+
+// ---------- Главный экран ----------
+
+@Composable
+private fun SettingsMain(settingsStore: SettingsStore, onBack: () -> Unit, onOpen: (Int) -> Unit) {
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    var theme by remember { mutableIntStateOf(0) }
+    var showThemeDialog by remember { mutableStateOf(false) }
+    var newEpisodesEnabled by remember { mutableStateOf(true) }
+    val version = remember {
+        ru.anidesk.app.BuildConfig.VERSION_NAME
+    }
+
+    LaunchedEffect(Unit) {
+        theme = settingsStore.theme.first()
+        newEpisodesEnabled = settingsStore.newEpisodesEnabled.first()
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .windowInsetsPadding(WindowInsets.statusBars),
+    ) {
+        ScreenTitle("Настройки", onBack = onBack)
+        HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant, thickness = 1.dp)
+
+        Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+            SettingsRow(
+                icon = Icons.Filled.DarkMode,
+                title = "Тема",
+                summary = THEME_OPTIONS.firstOrNull { it.first == theme }?.second ?: "",
+                onClick = { showThemeDialog = true },
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = Icons.Filled.PlayArrow,
+                title = "Воспроизведение",
+                onClick = { onOpen(1) },
+            )
+            SettingsRow(
+                icon = Icons.Filled.Palette,
+                title = "Оформление",
+                onClick = { onOpen(2) },
+            )
+            SettingsRow(
+                icon = Icons.Filled.Storage,
+                title = "Данные",
+                onClick = { onOpen(3) },
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = Icons.Filled.Notifications,
+                title = "Уведомления",
+                trailing = {
+                    Switch(
+                        checked = newEpisodesEnabled,
+                        onCheckedChange = {
+                            newEpisodesEnabled = it
+                            scope.launch {
+                                settingsStore.setNewEpisodesEnabled(it)
+                                if (it) Notifications.schedule(context) else Notifications.cancel(context)
+                            }
+                        },
+                        colors = SwitchDefaults.colors(checkedTrackColor = Carmine),
+                    )
+                },
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = Icons.Filled.Info,
+                title = "О приложении",
+                summary = "Версия $version",
+                onClick = { onOpen(4) },
+            )
+        }
+    }
+
+    if (showThemeDialog) {
+        AlertDialog(
+            onDismissRequest = { showThemeDialog = false },
+            title = { Text("Тема") },
+            text = {
+                Column {
+                    THEME_OPTIONS.forEach { (value, label) ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    theme = value
+                                    scope.launch { settingsStore.setTheme(value) }
+                                    showThemeDialog = false
+                                }
+                                .padding(vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = label,
+                                fontSize = 15.sp,
+                                color = MainText,
+                                modifier = Modifier.weight(1f),
+                            )
+                            if (theme == value) {
+                                Icon(Icons.Filled.Check, contentDescription = null, tint = Carmine, modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showThemeDialog = false }) { Text("Отмена") }
+            },
+        )
+    }
+}
+
+// ---------- Воспроизведение ----------
+
+@Composable
+private fun PlaybackSettings(settingsStore: SettingsStore, onBack: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    var quality by remember { mutableIntStateOf(0) }
+    var rewindTime by remember { mutableIntStateOf(10) }
+    var orientationLock by remember { mutableStateOf(false) }
+    var autoPlay by remember { mutableStateOf(false) }
+    var showQualityDialog by remember { mutableStateOf(false) }
+    var showRewindDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        quality = settingsStore.defaultQuality.first()
+        rewindTime = settingsStore.rewindTime.first()
+        orientationLock = settingsStore.orientationLock.first()
+        autoPlay = settingsStore.autoPlay.first()
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .windowInsetsPadding(WindowInsets.statusBars),
+    ) {
+        SubScreenHeader("Воспроизведение", onBack)
+        HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant, thickness = 1.dp)
+
+        Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+            SettingsRow(
+                icon = Icons.Filled.PlayCircle,
+                title = "Качество видео по умолчанию",
+                summary = QUALITY_OPTIONS.firstOrNull { it.first == quality }?.second ?: "",
+                onClick = { showQualityDialog = true },
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = Icons.Filled.FastForward,
+                title = "Пропуск",
+                summary = REWIND_OPTIONS.firstOrNull { it.first == rewindTime }?.second ?: "",
+                onClick = { showRewindDialog = true },
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = Icons.Filled.Fullscreen,
+                title = "Только горизонтальная ориентация",
+                summary = "В плеере разрешён только ландшафт",
+                trailing = {
+                    Switch(
+                        checked = orientationLock,
+                        onCheckedChange = {
+                            orientationLock = it
+                            scope.launch { settingsStore.setOrientationLock(it) }
+                        },
+                        colors = SwitchDefaults.colors(checkedTrackColor = Carmine),
+                    )
+                },
+            )
+            SettingsRow(
+                icon = Icons.Filled.PlayArrow,
+                title = "Автовоспроизведение",
+                summary = "Следующая серия запустится автоматически",
+                trailing = {
+                    Switch(
+                        checked = autoPlay,
+                        onCheckedChange = {
+                            autoPlay = it
+                            scope.launch { settingsStore.setAutoPlay(it) }
+                        },
+                        colors = SwitchDefaults.colors(checkedTrackColor = Carmine),
+                    )
+                },
+            )
+        }
+    }
+
+    if (showQualityDialog) {
+        AlertDialog(
+            onDismissRequest = { showQualityDialog = false },
+            title = { Text("Качество видео по умолчанию") },
+            text = {
+                Column {
+                    QUALITY_OPTIONS.forEach { (value, label) ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    quality = value
+                                    scope.launch { settingsStore.setDefaultQuality(value) }
+                                    showQualityDialog = false
+                                }
+                                .padding(vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = label,
+                                fontSize = 15.sp,
+                                color = MainText,
+                                modifier = Modifier.weight(1f),
+                            )
+                            if (quality == value) {
+                                Icon(Icons.Filled.Check, contentDescription = null, tint = Carmine, modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showQualityDialog = false }) { Text("Отмена") }
+            },
+        )
+    }
+
+    if (showRewindDialog) {
+        AlertDialog(
+            onDismissRequest = { showRewindDialog = false },
+            title = { Text("Пропуск") },
+            text = {
+                Column {
+                    REWIND_OPTIONS.forEach { (value, label) ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    rewindTime = value
+                                    scope.launch { settingsStore.setRewindTime(value) }
+                                    showRewindDialog = false
+                                }
+                                .padding(vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = label,
+                                fontSize = 15.sp,
+                                color = MainText,
+                                modifier = Modifier.weight(1f),
+                            )
+                            if (rewindTime == value) {
+                                Icon(Icons.Filled.Check, contentDescription = null, tint = Carmine, modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showRewindDialog = false }) { Text("Отмена") }
+            },
+        )
+    }
+}
+
+// ---------- Оформление ----------
+
+@Composable
+private fun AppearanceSettings(settingsStore: SettingsStore, onBack: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    var viewType by remember { mutableIntStateOf(0) }
+    var showViewTypeDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        viewType = settingsStore.viewType.first()
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .windowInsetsPadding(WindowInsets.statusBars),
+    ) {
+        SubScreenHeader("Оформление", onBack)
+        HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant, thickness = 1.dp)
+
+        Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+            SettingsRow(
+                icon = Icons.Filled.Palette,
+                title = "Вид отображения",
+                summary = VIEW_TYPE_OPTIONS.firstOrNull { it.first == viewType }?.second ?: "",
+                onClick = { showViewTypeDialog = true },
+            )
+        }
+    }
+
+    if (showViewTypeDialog) {
+        AlertDialog(
+            onDismissRequest = { showViewTypeDialog = false },
+            title = { Text("Вид отображения") },
+            text = {
+                Column {
+                    VIEW_TYPE_OPTIONS.forEach { (value, label) ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    viewType = value
+                                    scope.launch { settingsStore.setViewType(value) }
+                                    showViewTypeDialog = false
+                                }
+                                .padding(vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = label,
+                                fontSize = 15.sp,
+                                color = MainText,
+                                modifier = Modifier.weight(1f),
+                            )
+                            if (viewType == value) {
+                                Icon(Icons.Filled.Check, contentDescription = null, tint = Carmine, modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showViewTypeDialog = false }) { Text("Отмена") }
+            },
+        )
+    }
+}
+
+// ---------- Данные ----------
+
+@Composable
+private fun DataSettings(api: AnixartApi, settingsStore: SettingsStore, onBack: () -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var cacheCleared by remember { mutableStateOf(false) }
+    var apiEndpoint by remember { mutableStateOf(SettingsStore.DEFAULT_API_ENDPOINT) }
+    var showApiDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        apiEndpoint = settingsStore.apiEndpoint.first()
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .windowInsetsPadding(WindowInsets.statusBars),
+    ) {
+        SubScreenHeader("Данные", onBack)
+        HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant, thickness = 1.dp)
+
+        Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+            SettingsRow(
+                icon = Icons.Filled.Storage,
+                title = "Эндпоинт API",
+                summary = apiEndpoint,
+                onClick = { showApiDialog = true },
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = Icons.Filled.DeleteSweep,
+                title = "Очистить кэш изображений",
+                summary = if (cacheCleared) "Кэш очищен" else "Удалить загруженные изображения",
+                onClick = {
+                    scope.launch {
+                        val loader = coil3.SingletonImageLoader.get(context)
+                        loader.memoryCache?.clear()
+                        loader.diskCache?.clear()
+                        cacheCleared = true
+                    }
+                },
+            )
+        }
+    }
+
+    if (showApiDialog) {
+        AlertDialog(
+            onDismissRequest = { showApiDialog = false },
+            title = { Text("Эндпоинт API") },
+            text = {
+                Column {
+                    SettingsStore.API_ENDPOINTS.forEach { (host, label) ->
+                        var focused by remember { mutableStateOf(false) }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (focused) Carmine else Color.Transparent)
+                                .onFocusChanged { focused = it.isFocused }
+                                .clickable {
+                                    apiEndpoint = host
+                                    scope.launch {
+                                        settingsStore.setApiEndpoint(host)
+                                        api.baseUrl = SettingsStore.apiBaseUrl(host)
+                                    }
+                                    showApiDialog = false
+                                }
+                                .padding(horizontal = 12.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center,
+                        ) {
+                            Text(
+                                text = label,
+                                fontSize = 15.sp,
+                                color = if (focused) OnCarmine else MainText,
+                                textAlign = TextAlign.Center,
+                            )
+                            if (apiEndpoint == host) {
+                                Spacer(Modifier.width(6.dp))
+                                Icon(
+                                    Icons.Filled.Check,
+                                    contentDescription = null,
+                                    tint = if (focused) OnCarmine else Carmine,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showApiDialog = false }) { Text("Отмена") }
+            },
+        )
+    }
+}
+
+// ---------- О приложении ----------
+
+@Composable
+private fun AboutSettings(updateManager: UpdateManager, onBack: () -> Unit) {
+    val version = remember { ru.anidesk.app.BuildConfig.VERSION_NAME }
+    val status by updateManager.status.collectAsStateWithLifecycle()
+
+    @Composable
+    fun statusSummary(): String? = when (status) {
+        UpdateStatus.Idle -> null
+        UpdateStatus.Checking -> "Проверка обновлений…"
+        UpdateStatus.UpToDate -> "У вас последняя версия"
+        is UpdateStatus.Available -> "Доступна версия ${(status as UpdateStatus.Available).info.versionName}"
+        is UpdateStatus.Failed -> "Ошибка проверки"
+        is UpdateStatus.Downloading -> "Скачивание обновления…"
+        is UpdateStatus.Ready -> "Обновление скачано"
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .windowInsetsPadding(WindowInsets.statusBars),
+    ) {
+        SubScreenHeader("О приложении", onBack)
+        HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant, thickness = 1.dp)
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 40.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text("AniDesk", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = MainText)
+            Spacer(Modifier.width(0.dp))
+            Text("Версия $version", fontSize = 14.sp, color = ThirdText)
+            Text("Разработчик: Smold2", fontSize = 13.sp, color = ThirdText)
+        }
+
+        HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant, thickness = 1.dp)
+        SettingsRow(
+            icon = Icons.Filled.Update,
+            title = "Проверить обновления",
+            summary = statusSummary(),
+            onClick = { updateManager.checkForUpdates() },
+        )
+    }
+
+    UpdateDialogs(updateManager)
+}
+
+@Composable
+private fun UpdateDialogs(manager: UpdateManager) {
+    val context = LocalContext.current
+    val version = remember { ru.anidesk.app.BuildConfig.VERSION_NAME }
+    val status by manager.status.collectAsStateWithLifecycle()
+    val promptVersion by manager.promptVersion.collectAsStateWithLifecycle()
+    val installPrompt by manager.installPrompt.collectAsStateWithLifecycle()
+    val permissionPrompt by manager.permissionPrompt.collectAsStateWithLifecycle()
+    var readyDismissed by remember { mutableStateOf(false) }
+
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        manager.retryPendingInstall()
+    }
+
+    LaunchedEffect(status) {
+        if (status !is UpdateStatus.Ready) {
+            readyDismissed = false
+            manager.dismissInstallPrompt()
+        }
+    }
+
+    if (permissionPrompt) {
+        AlertDialog(
+            onDismissRequest = { manager.dismissPermissionPrompt() },
+            title = { Text("Разрешить установку") },
+            text = {
+                Text(
+                    "Для установки обновления разрешите приложению AniDesk установку из неизвестных источников. Переключатель появится в открывшихся настройках.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { manager.openInstallSourceSettings() }) {
+                    Text("Открыть настройки")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { manager.dismissPermissionPrompt() }) {
+                    Text("Позже")
+                }
+            },
+        )
+    }
+
+    val available = status as? UpdateStatus.Available
+    if (available != null && promptVersion != null) {
+        AlertDialog(
+            onDismissRequest = { manager.dismissPrompt() },
+            title = { Text("Доступно обновление ${available.info.versionName}") },
+            text = {
+                Column {
+                    Text(
+                        "Установленная версия: $version",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ThirdText,
+                    )
+                    Text(
+                        available.info.changelog.ifBlank { "Описание изменений отсутствует." },
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.verticalScroll(rememberScrollState()),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { manager.download(available.info) }) {
+                    Text("Скачать")
+                }
+            },
+            dismissButton = {
+                Row {
+                    if (available.info.releaseUrl.isNotEmpty()) {
+                        TextButton(
+                            onClick = {
+                                runCatching {
+                                    context.startActivity(
+                                        Intent(Intent.ACTION_VIEW, Uri.parse(available.info.releaseUrl))
+                                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                                    )
+                                }
+                            },
+                        ) {
+                            Text("GitHub")
+                        }
+                    }
+                    TextButton(onClick = { manager.dismissPrompt() }) {
+                        Text("Позже")
+                    }
+                }
+            },
+        )
+    }
+
+    when (val s = status) {
+        is UpdateStatus.Downloading -> {
+            AlertDialog(
+                onDismissRequest = {},
+                title = { Text("Скачивание обновления") },
+                text = {
+                    Column {
+                        if (s.percent >= 0) {
+                            LinearProgressIndicator(
+                                progress = { s.percent / 100f },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Text(
+                                "${s.percent}%",
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        } else {
+                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                            Text(
+                                "Загрузка…",
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
+                },
+                confirmButton = {},
+            )
+        }
+        is UpdateStatus.Ready -> {
+            if (installPrompt || !readyDismissed) {
+                AlertDialog(
+                    onDismissRequest = {
+                        readyDismissed = true
+                        manager.dismissInstallPrompt()
+                    },
+                    title = { Text("Обновление скачано") },
+                    text = { Text("Установить скачанную версию? Системный установщик откроется поверх приложения.") },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                readyDismissed = true
+                                manager.dismissInstallPrompt()
+                                manager.install(s.file)
+                            },
+                        ) {
+                            Text("Установить")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(
+                            onClick = {
+                                readyDismissed = true
+                                manager.dismissInstallPrompt()
+                            },
+                        ) {
+                            Text("Позже")
+                        }
+                    },
+                )
+            }
+        }
+        is UpdateStatus.Failed -> {
+            AlertDialog(
+                onDismissRequest = { manager.dismissFailed() },
+                title = { Text("Ошибка") },
+                text = { Text(s.message) },
+                confirmButton = {
+                    TextButton(onClick = { manager.dismissFailed() }) {
+                        Text("ОК")
+                    }
+                },
+            )
+        }
+        else -> Unit
+    }
+}
+
+// ---------- Общие элементы ----------
+
+@Composable
+private fun ScreenTitle(title: String, onBack: (() -> Unit)? = null) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (onBack != null) {
+            HeaderIconButton(
+                icon = Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = "Назад",
+                onClick = onBack,
+            )
+        } else {
+            Spacer(Modifier.width(16.dp))
+        }
+        Text(
+            text = title,
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold,
+            color = MainText,
+        )
+    }
+}
+
+@Composable
+private fun SubScreenHeader(title: String, onBack: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        HeaderIconButton(
+            icon = Icons.AutoMirrored.Filled.ArrowBack,
+            contentDescription = "Назад",
+            onClick = onBack,
+        )
+        Text(
+            text = title,
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold,
+            color = MainText,
+        )
+    }
+}
+
+@Composable
+private fun SettingsRow(
+    icon: ImageVector,
+    title: String,
+    summary: String? = null,
+    onClick: (() -> Unit)? = null,
+    trailing: (@Composable () -> Unit)? = null,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(
+                if (onClick != null) {
+                    Modifier.clickable { onClick() }
+                } else {
+                    Modifier
+                }
+            )
+            .padding(
+                start = 16.dp,
+                end = 16.dp,
+                top = 14.dp,
+                bottom = 14.dp,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = Carmine,
+            modifier = Modifier.size(24.dp),
+        )
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 16.dp),
+        ) {
+            Text(text = title, fontSize = 15.sp, color = MainText)
+            if (!summary.isNullOrEmpty()) {
+                Text(text = summary, fontSize = 13.sp, color = ThirdText)
+            }
+        }
+        trailing?.invoke()
+        if (onClick != null && trailing == null) {
+            Icon(
+                imageVector = Icons.Filled.ChevronRight,
+                contentDescription = null,
+                tint = SecondaryText,
+                modifier = Modifier.size(20.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun SettingsDivider() {
+    HorizontalDivider(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        thickness = 1.dp,
+        modifier = Modifier.padding(start = 56.dp),
+    )
+}
