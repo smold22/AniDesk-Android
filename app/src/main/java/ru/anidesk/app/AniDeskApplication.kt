@@ -38,6 +38,7 @@ class AniDeskApplication : Application() {
         val notifyEnabled = runBlocking { settingsStore.newEpisodesEnabled.first() }
         if (notifyEnabled) {
             Notifications.schedule(this)
+            Notifications.runImmediately(this)
         }
     }
 

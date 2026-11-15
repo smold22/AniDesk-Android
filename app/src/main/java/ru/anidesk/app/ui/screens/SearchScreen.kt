@@ -108,7 +108,7 @@ fun SearchScreen(
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
-            error = "Ошибка поиска: ${e.message}"
+            error = e.networkAwareMessage("Ошибка поиска:")
         } finally {
             loading = false
         }

@@ -1,11 +1,11 @@
 package ru.anidesk.app.core.notifications
 
 import android.content.Context
+import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import kotlinx.coroutines.flow.first
 import ru.anidesk.app.core.network.AnixartApi
-import ru.anidesk.app.core.network.EpisodeNotification
 import ru.anidesk.app.core.network.PageableResponse
 import ru.anidesk.app.core.network.Release
 import ru.anidesk.app.core.network.RelatedReleaseNotification
@@ -13,15 +13,13 @@ import ru.anidesk.app.core.network.SessionStore
 import ru.anidesk.app.core.settings.SettingsStore
 
 /**
- * Фоновая проверка уведомлений (аналог серверных пушей FCM в AnixartM, который
- * присылает готовые title/text по категориям). Здесь те же категорийные фиды
- * опрашиваются локально через WorkManager:
- *   - notification/episodes            — новые серии
- *   - notification/related/release     — новые серии похожих тайтлов
+ * Фоновая проверка уведомлений через WorkManager:
+ *   - закладки профиля (статусы 1..5) — новые серии у отслеживаемых тайтлов;
+ *   - notification/related/release — новые серии похожих тайтлов.
  *
- * Каждый фид опрашивается независимо (ошибка одного не ломает остальные).
- * Первый запуск молча запоминает id всех текущих уведомлений (без спама),
- * последующие — показывают только появившиеся с прошлой проверки.
+ * Новые серии определяются локально по [Release.episodesReleased] и базовой линии
+ * из [SettingsStore]. При первом запуске базовая линия только запоминается, чтобы
+ * не присылать уведомления за все уже вышедшие серии.
  */
 class EpisodeNotificationsWorker(
     appContext: Context,
@@ -31,6 +29,7 @@ class EpisodeNotificationsWorker(
     private data class Item(
         val key: String,
         val notificationId: Int,
+        val timestamp: Long,
         val releaseId: Int?,
         val title: String,
         val text: String,
@@ -44,24 +43,33 @@ class EpisodeNotificationsWorker(
         val api = AnixartApi(SettingsStore.apiBaseUrl(settings.apiEndpoint.first()))
         api.token = token
 
-        val initialized = settings.notificationsInitialized.first()
-        val seen = settings.getNotifiedNotificationIds().toMutableSet()
-        val toNotify = mutableListOf<Item>()
-        var anySuccess = false
+        runCatching { NotificationPreferences.ensureConfigured(api, settings) }
 
-        fun add(prefix: String, id: Long, releaseId: Int?, title: String, text: String) {
-            val key = "$prefix:$id"
-            if (seen.contains(key)) return
-            seen += key
-            if (initialized) {
-                toNotify += Item(
-                    key = key,
-                    notificationId = hashNotificationId(prefix, id),
-                    releaseId = releaseId?.takeIf { it > 0 },
-                    title = title,
-                    text = text,
-                )
-            }
+        val seen = settings.getNotifiedNotificationIds().toMutableSet()
+        val pending = mutableSetOf<String>()
+        val toNotify = mutableListOf<Item>()
+        var bookmarksFetched = false
+
+        fun add(
+            prefix: String,
+            id: Long,
+            fallbackKey: String,
+            timestamp: Long,
+            releaseId: Int?,
+            title: String,
+            text: String,
+        ) {
+            val key = notificationKey(prefix, id, fallbackKey)
+            if (seen.contains(key) || pending.contains(key)) return
+            pending += key
+            toNotify += Item(
+                key = key,
+                notificationId = hashNotificationId(prefix, id, fallbackKey),
+                timestamp = timestamp,
+                releaseId = releaseId?.takeIf { it > 0 },
+                title = title,
+                text = text,
+            )
         }
 
         suspend fun <T> pages(fetch: suspend (Int) -> PageableResponse<T>): List<T> {
@@ -80,11 +88,10 @@ class EpisodeNotificationsWorker(
         suspend fun runFeed(block: suspend () -> Unit) {
             try {
                 block()
-                anySuccess = true
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
-                // Один неудачный фид не должен ломать остальные.
+                Log.w(TAG, "Notification feed failed", e)
             }
         }
 
@@ -92,50 +99,75 @@ class EpisodeNotificationsWorker(
             release?.titleRu?.ifBlank { release.title }?.ifBlank { release.id.toString() }
                 ?: "Новый релиз"
 
-        // Новые серии
+        // Новые серии у тайтлов из закладок.
+        val currentCounts = mutableMapOf<Int, Int>()
+        val currentReleases = mutableMapOf<Int, Release>()
         runFeed {
-            pages<EpisodeNotification> { api.notificationEpisodes(it) }.forEach { n ->
-                val ep = n.episode
-                val release = ep?.release
-                val releaseId = (ep?.releaseId ?: 0L).takeIf { it > 0L }?.toInt()
-                    ?: release?.id
-                    ?: 0
-                val epLabel = ep?.name?.ifBlank { ep.position.toString() }.orEmpty().let {
-                    if (it.isBlank() || it == "0") "" else " $it"
+            for (status in BOOKMARK_STATUSES) {
+                var page = 0
+                while (page < MAX_BOOKMARK_PAGES) {
+                    val res = api.profileList(status, page)
+                    res.content.forEach { release ->
+                        val released = release.episodesReleased ?: return@forEach
+                        currentCounts[release.id] = maxOf(currentCounts[release.id] ?: 0, released)
+                        currentReleases[release.id] = release
+                    }
+                    if (res.content.isEmpty()) break
+                    page++
                 }
-                add(
-                    PREFIX_EPISODE, n.id, releaseId,
-                    releaseTitle(release),
-                    "Вышла серия$epLabel — смотреть",
-                )
             }
+            bookmarksFetched = true
         }
 
-        // Похожие релизы
+        if (bookmarksFetched) {
+            val baseline = settings.episodeBaseline.first()
+            val baselineInitialized = settings.getEpisodeBaselineInitialized()
+            if (baselineInitialized) {
+                val now = System.currentTimeMillis()
+                currentCounts.forEach { (releaseId, current) ->
+                    val previous = baseline[releaseId] ?: return@forEach
+                    if (current <= previous) return@forEach
+                    val release = currentReleases[releaseId]
+                    val title = releaseTitle(release)
+                    for (position in (previous + 1)..current) {
+                        add(
+                            PREFIX_LOCAL_EPISODE,
+                            0L,
+                            "$releaseId:$position",
+                            now + position,
+                            releaseId,
+                            title,
+                            "Вышла серия $position",
+                        )
+                    }
+                }
+            }
+            settings.setEpisodeBaseline(currentCounts)
+            settings.setEpisodeBaselineInitialized(true)
+        }
+
+        // Похожие релизы.
         runFeed {
-            pages<RelatedReleaseNotification> { api.notificationRelatedReleases(it) }.forEach { n ->
+            val items = pages<RelatedReleaseNotification> { api.notificationRelatedReleases(it) }
+            items.forEach { n ->
                 val release = n.release
+                val fallbackKey = listOfNotNull(
+                    release?.id?.takeIf { it > 0 }?.toString(),
+                    n.timestamp.takeIf { it > 0 }?.toString(),
+                ).joinToString(":")
                 add(
-                    PREFIX_RELATED, n.id, release?.id ?: 0,
+                    PREFIX_RELATED, n.id, fallbackKey, n.timestamp, release?.id ?: 0,
                     releaseTitle(release),
                     "Появился новый связанный релиз",
                 )
             }
         }
 
-        // Если ни один фид не ответил — дадим WorkManager повторить позже.
-        if (!anySuccess) return Result.retry()
+        if (!bookmarksFetched) return Result.retry()
 
-        settings.setNotifiedNotificationIds(seen)
-        if (!initialized) {
-            settings.setNotificationsInitialized(true)
-            return Result.success()
-        }
-
-        toNotify
-            .sortedByDescending { it.notificationId }
-            .take(MAX_NOTIFICATIONS_PER_RUN)
-            .forEach { item ->
+        val shown = toNotify
+            .sortedByDescending { it.timestamp }
+            .filter { item ->
                 Notifications.show(
                     applicationContext,
                     item.notificationId,
@@ -145,25 +177,37 @@ class EpisodeNotificationsWorker(
                 )
             }
 
+        if (shown.isNotEmpty()) {
+            seen += shown.map { it.key }
+            settings.setNotifiedNotificationIds(seen)
+        }
+        settings.setNotificationsInitialized(true)
+
         return Result.success()
     }
 
-    private fun hashNotificationId(prefix: String, id: Long): Int {
+    private fun notificationKey(prefix: String, id: Long, fallbackKey: String): String =
+        if (id > 0) "$prefix:$id" else "$prefix:x:$fallbackKey"
+
+    private fun hashNotificationId(prefix: String, id: Long, fallbackKey: String): Int {
         val base = baseForPrefix(prefix)
-        return base + (id % 1_000_000).toInt()
+        val value = if (id > 0) id else (fallbackKey.hashCode().toLong() and 0xffffffffL)
+        return base + (value % 1_000_000).toInt()
     }
 
     private fun baseForPrefix(prefix: String): Int = when (prefix) {
-        PREFIX_EPISODE -> 1_000_000
+        PREFIX_LOCAL_EPISODE -> 3_000_000
         PREFIX_RELATED -> 2_000_000
         else -> 9_000_000
     }
 
     companion object {
         private const val MAX_PAGES = 3
-        private const val MAX_NOTIFICATIONS_PER_RUN = 5
+        private const val MAX_BOOKMARK_PAGES = 40
+        private val BOOKMARK_STATUSES = 1..5
 
-        private const val PREFIX_EPISODE = "ep"
+        private const val TAG = "EpisodeNotifications"
+        private const val PREFIX_LOCAL_EPISODE = "ep-local"
         private const val PREFIX_RELATED = "rr"
     }
 }

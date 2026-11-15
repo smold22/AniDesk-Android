@@ -129,7 +129,7 @@ fun AccountScreen(
                     else -> serverError = "Ошибка авторизации (код ${res.code})"
                 }
             } catch (e: Exception) {
-                serverError = "Сеть недоступна: ${e.message}"
+                serverError = e.networkAwareMessage("Сеть недоступна:")
             } finally {
                 loading = false
             }
@@ -164,7 +164,7 @@ fun AccountScreen(
                     else -> serverError = "Ошибка регистрации (код ${res.code})"
                 }
             } catch (e: Exception) {
-                serverError = "Сеть недоступна: ${e.message}"
+                serverError = e.networkAwareMessage("Сеть недоступна:")
             } finally {
                 loading = false
             }
@@ -202,7 +202,7 @@ fun AccountScreen(
                     else -> serverError = "Ошибка регистрации (код ${res.code})"
                 }
             } catch (e: Exception) {
-                serverError = "Сеть недоступна: ${e.message}"
+                serverError = e.networkAwareMessage("Сеть недоступна:")
             } finally {
                 loading = false
             }

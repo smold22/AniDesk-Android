@@ -15,6 +15,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -24,6 +25,7 @@ import androidx.navigation.navArgument
 import kotlinx.coroutines.flow.first
 import ru.anidesk.app.core.network.AnixartApi
 import ru.anidesk.app.core.network.SessionStore
+import ru.anidesk.app.core.notifications.Notifications
 import ru.anidesk.app.core.settings.SettingsStore
 import ru.anidesk.app.ui.screens.LoginScreen
 import ru.anidesk.app.ui.screens.PlayerScreen
@@ -56,6 +58,7 @@ fun AniDeskApp(
     notificationReleaseId: Int = 0,
 ) {
     val navController = rememberNavController()
+    val context = LocalContext.current
     var token by remember { mutableStateOf<String?>(null) }
     var authSkipped by remember { mutableStateOf(false) }
     var tokenLoaded by remember { mutableStateOf(false) }
@@ -73,10 +76,12 @@ fun AniDeskApp(
         }
     }
 
-    LaunchedEffect(notificationReleaseId) {
-        if (notificationReleaseId > 0 &&
-            navController.currentDestination?.route != Routes.RELEASE
-        ) {
+    LaunchedEffect(notificationReleaseId, token, tokenLoaded, authSkippedLoaded) {
+        if (!tokenLoaded || !authSkippedLoaded || token == null || notificationReleaseId <= 0) {
+            return@LaunchedEffect
+        }
+        val currentRoute = navController.currentDestination?.route ?: return@LaunchedEffect
+        if (currentRoute != Routes.RELEASE) {
             navController.navigate(Routes.release(notificationReleaseId)) {
                 launchSingleTop = true
             }
@@ -109,6 +114,9 @@ fun AniDeskApp(
             navController.navigate(Routes.LOGIN) {
                 popUpTo(0) { inclusive = true }
             }
+        }
+        if (token != null) {
+            Notifications.runImmediately(context)
         }
     }
 
@@ -157,6 +165,7 @@ fun AniDeskApp(
             val releaseId = backStackEntry.arguments?.getInt("releaseId") ?: 0
             ReleaseScreen(
                 api = api,
+                sessionStore = sessionStore,
                 settingsStore = settingsStore,
                 releaseId = releaseId,
                 onBack = { navController.popBackStack() },

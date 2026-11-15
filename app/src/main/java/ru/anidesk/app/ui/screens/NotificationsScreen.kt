@@ -112,10 +112,11 @@ fun NotificationsScreen(
         error = null
         try {
             coroutineScope {
-                suspend fun <T> fetch(key: String, block: suspend () -> List<T>): List<T> = runCatching { block() }.getOrDefault(emptyList())
+                suspend fun <T> fetch(block: suspend () -> List<T>): List<T> =
+                    runCatching { block() }.getOrDefault(emptyList())
 
-                val epDeferred = async { fetch("episodes") { api.notificationEpisodes(1).content } }
-                val rrDeferred = async { fetch("relatedReleases") { api.notificationRelatedReleases(1).content } }
+                val epDeferred = async { fetch { api.notificationEpisodes(1).content } }
+                val rrDeferred = async { fetch { api.notificationRelatedReleases(1).content } }
 
                 val epList = epDeferred.await()
                 val rrList = rrDeferred.await()
@@ -158,7 +159,7 @@ fun NotificationsScreen(
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
-            error = "Не удалось загрузить: ${e.message}"
+            error = e.networkAwareMessage("Не удалось загрузить:")
         } finally {
             loading = false
             refreshing = false
@@ -174,7 +175,7 @@ fun NotificationsScreen(
                 api.removeAllNotifications()
                 allNotifications = emptyList()
             } catch (e: Exception) {
-                error = "Не удалось очистить уведомления: ${e.message}"
+                error = e.networkAwareMessage("Не удалось очистить уведомления:")
             } finally {
                 loading = false
             }

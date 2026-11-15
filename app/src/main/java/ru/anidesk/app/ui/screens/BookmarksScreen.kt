@@ -64,7 +64,7 @@ import ru.anidesk.app.ui.components.LoadingIndicator
 import ru.anidesk.app.ui.components.PosterPlaceholder
 import ru.anidesk.app.ui.components.ReleaseGrid
 import ru.anidesk.app.ui.components.TabHeader
-import ru.anidesk.app.ui.components.releaseStatusColor
+import ru.anidesk.app.ui.components.ReleaseStatusBar
 import ru.anidesk.app.ui.theme.AltBackground
 import ru.anidesk.app.ui.theme.Carmine
 import ru.anidesk.app.ui.theme.SecondaryText
@@ -122,7 +122,7 @@ fun BookmarksScreen(
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
-            error = "Не удалось загрузить: ${e.message}"
+            error = e.networkAwareMessage("Не удалось загрузить:")
         } finally {
             loading = false
         }
@@ -360,15 +360,11 @@ private fun HistoryListItem(
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,
             )
-            if (release.profileListStatus != null && release.profileListStatus > 0) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .fillMaxWidth()
-                        .height(3.dp)
-                        .background(releaseStatusColor(release)),
-                )
-            }
+            ReleaseStatusBar(
+                release = release,
+                modifier = Modifier.align(Alignment.BottomStart),
+                fontSize = 12.sp,
+            )
         }
         Column(
             modifier = Modifier

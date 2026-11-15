@@ -1,5 +1,9 @@
 ﻿package ru.anidesk.app.ui.screens
 
+import android.app.Activity
+import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -32,6 +36,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -41,6 +46,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import ru.anidesk.app.core.network.AnixartApi
 import ru.anidesk.app.core.network.SessionStore
+import ru.anidesk.app.ui.auth.VkOAuthActivity
 import ru.anidesk.app.ui.theme.MainText
 import ru.anidesk.app.ui.theme.PlayerRed
 import ru.anidesk.app.ui.theme.SecondaryText
@@ -55,12 +61,69 @@ fun LoginScreen(api: AnixartApi, sessionStore: SessionStore) {
     var hash by remember { mutableStateOf<String?>(null) }
     var isRegister by remember { mutableStateOf(false) }
     var isRestore by remember { mutableStateOf(false) }
+    var isVkRegister by remember { mutableStateOf(false) }
+    var vkToken by remember { mutableStateOf<String?>(null) }
     var restoreHash by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     var loginFocused by remember { mutableStateOf(false) }
     var passwordFocused by remember { mutableStateOf(false) }
+
+    val vkLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        android.util.Log.i(
+            "VkOAuth",
+            "resultCode=${result.resultCode} token=${!result.data?.getStringExtra(VkOAuthActivity.EXTRA_ACCESS_TOKEN).isNullOrBlank()}",
+        )
+        if (result.resultCode == Activity.RESULT_OK) {
+            val vkAccessToken = result.data?.getStringExtra(VkOAuthActivity.EXTRA_ACCESS_TOKEN)
+            if (!vkAccessToken.isNullOrBlank()) {
+                vkToken = vkAccessToken
+                error = null
+                loading = true
+                scope.launch {
+                    try {
+                        val res = api.signInWithVk(vkAccessToken)
+                        when (res.code) {
+                            0 -> {
+                                val profileToken = res.profileToken
+                                val profile = res.profile
+                                if (profileToken != null && profile != null) {
+                                    sessionStore.save(profile.id, profileToken.token)
+                                } else {
+                                    error = "Некорректный ответ сервера"
+                                }
+                            }
+
+                            3 -> {
+                                isVkRegister = true
+                                isRegister = false
+                                isRestore = false
+                                hash = null
+                                code = ""
+                                password = ""
+                                confirmPassword = ""
+                                error = null
+                            }
+
+                            2 -> error = "Некорректный запрос ВКонтакте"
+                            else -> error = "Ошибка входа через ВКонтакте (код ${res.code})"
+                        }
+                    } catch (e: Exception) {
+                        error = e.networkAwareMessage("Сеть недоступна:")
+                    } finally {
+                        loading = false
+                    }
+                }
+            }
+        } else {
+            val message = result.data?.getStringExtra(VkOAuthActivity.EXTRA_ERROR)
+            if (!message.isNullOrBlank()) error = message
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -98,7 +161,7 @@ fun LoginScreen(api: AnixartApi, sessionStore: SessionStore) {
             ),
         )
 
-        if (isRegister && hash == null) {
+        if ((isRegister || isVkRegister) && hash == null) {
             Spacer(Modifier.height(14.dp))
             OutlinedTextField(
                 value = email,
@@ -119,7 +182,7 @@ fun LoginScreen(api: AnixartApi, sessionStore: SessionStore) {
         }
 
         Spacer(Modifier.height(14.dp))
-        if (!isRestore || restoreHash != null) {
+        if (!isVkRegister && (!isRestore || restoreHash != null)) {
             OutlinedTextField(
                 value = password,
                 onValueChange = {
@@ -141,7 +204,7 @@ fun LoginScreen(api: AnixartApi, sessionStore: SessionStore) {
             )
         }
 
-        if (isRegister && hash == null) {
+        if (isRegister && !isVkRegister && hash == null) {
             Spacer(Modifier.height(14.dp))
             OutlinedTextField(
                 value = confirmPassword,
@@ -162,7 +225,7 @@ fun LoginScreen(api: AnixartApi, sessionStore: SessionStore) {
             )
         }
 
-        if ((isRegister && hash != null) || (isRestore && restoreHash != null)) {
+        if ((hash != null && (isRegister || isVkRegister)) || (isRestore && restoreHash != null)) {
             Spacer(Modifier.height(14.dp))
             OutlinedTextField(
                 value = code,
@@ -213,7 +276,7 @@ fun LoginScreen(api: AnixartApi, sessionStore: SessionStore) {
                                     else -> error = "Ошибка восстановления (код ${res.code})"
                                 }
                             } catch (e: Exception) {
-                                error = "Сеть недоступна: ${e.message}"
+                                error = e.networkAwareMessage("Сеть недоступна:")
                             } finally {
                                 loading = false
                             }
@@ -246,10 +309,98 @@ fun LoginScreen(api: AnixartApi, sessionStore: SessionStore) {
                                     else -> error = "Ошибка восстановления (код ${res.code})"
                                 }
                             } catch (e: Exception) {
-                                error = "Сеть недоступна: ${e.message}"
+                                error = e.networkAwareMessage("Сеть недоступна:")
                             } finally {
                                 loading = false
                             }
+                        }
+                    }
+                    return@Button
+                }
+                if (isVkRegister && hash != null) {
+                    if (code.isBlank()) {
+                        error = "Введите код из письма"
+                        return@Button
+                    }
+                    val currentHash = hash ?: return@Button
+                    val currentVk = vkToken
+                    if (currentVk.isNullOrBlank()) {
+                        error = "Сессия ВКонтакте истекла, войдите заново"
+                        return@Button
+                    }
+                    loading = true
+                    scope.launch {
+                        try {
+                            val res = api.verifyVk(login.trim(), email.trim(), currentVk, currentHash, code.trim())
+                            when (res.code) {
+                                0 -> {
+                                    val token = res.profileToken
+                                    val profile = res.profile
+                                    if (token != null && profile != null) {
+                                        sessionStore.save(profile.id, token.token)
+                                    } else {
+                                        error = "Некорректный ответ сервера"
+                                    }
+                                }
+
+                                2 -> error = "Некорректный логин"
+                                3 -> error = "Некорректная почта"
+                                4 -> error = "Некорректный пароль"
+                                5 -> error = "Логин уже занят"
+                                6 -> error = "Почта уже занята"
+                                7 -> error = "Неверный код"
+                                8 -> error = "Код истёк, зарегистрируйтесь заново"
+                                9 -> error = "Неверный хеш подтверждения"
+                                10 -> error = "Почтовый сервис недоступен"
+                                11 -> error = "Слишком много регистраций"
+                                else -> error = "Ошибка регистрации (код ${res.code})"
+                            }
+                        } catch (e: Exception) {
+                            error = e.networkAwareMessage("Сеть недоступна:")
+                        } finally {
+                            loading = false
+                        }
+                    }
+                    return@Button
+                }
+                if (isVkRegister) {
+                    if (login.isBlank() || email.isBlank()) {
+                        error = "Заполните логин и почту"
+                        return@Button
+                    }
+                    val currentVk = vkToken
+                    if (currentVk.isNullOrBlank()) {
+                        error = "Сессия ВКонтакте истекла, войдите заново"
+                        return@Button
+                    }
+                    loading = true
+                    scope.launch {
+                        try {
+                            val res = api.signUpWithVk(login.trim(), email.trim(), currentVk)
+                            when (res.code) {
+                                0, 8 -> {
+                                    hash = res.hash.ifBlank { null }
+                                    if (hash == null) {
+                                        error = "Сервер не вернул хеш подтверждения"
+                                    } else {
+                                        code = ""
+                                        error = null
+                                    }
+                                }
+
+                                2 -> error = "Некорректный запрос"
+                                4 -> error = "Некорректный логин"
+                                5 -> error = "Некорректная почта"
+                                6 -> error = "Логин уже занят"
+                                7 -> error = "Почта уже занята"
+                                9 -> error = "Почтовый сервис недоступен"
+                                10 -> error = "Слишком много регистраций"
+                                else -> error = "Ошибка регистрации (код ${res.code})"
+                            }
+                        } catch (e: Exception) {
+                            error = e.networkAwareMessage("Сеть недоступна:")
+                        } finally {
+                            loading = false
                         }
                     }
                     return@Button
@@ -287,7 +438,7 @@ fun LoginScreen(api: AnixartApi, sessionStore: SessionStore) {
                                 else -> error = "Ошибка регистрации (код ${res.code})"
                             }
                         } catch (e: Exception) {
-                            error = "Сеть недоступна: ${e.message}"
+                            error = e.networkAwareMessage("Сеть недоступна:")
                         } finally {
                             loading = false
                         }
@@ -319,7 +470,7 @@ fun LoginScreen(api: AnixartApi, sessionStore: SessionStore) {
                                 else -> error = "Ошибка регистрации (код ${res.code})"
                             }
                         } catch (e: Exception) {
-                            error = "Сеть недоступна: ${e.message}"
+                            error = e.networkAwareMessage("Сеть недоступна:")
                         } finally {
                             loading = false
                         }
@@ -348,7 +499,7 @@ fun LoginScreen(api: AnixartApi, sessionStore: SessionStore) {
                                 else -> error = "Ошибка авторизации (код ${res.code})"
                             }
                         } catch (e: Exception) {
-                            error = "Сеть недоступна: ${e.message}"
+                            error = e.networkAwareMessage("Сеть недоступна:")
                         } finally {
                             loading = false
                         }
@@ -372,6 +523,8 @@ fun LoginScreen(api: AnixartApi, sessionStore: SessionStore) {
                 Text(
                     text = when {
                         isRestore -> "Восстановить"
+                        isVkRegister && hash != null -> "Подтвердить"
+                        isVkRegister -> "Создать профиль"
                         isRegister && hash != null -> "Подтвердить"
                         isRegister -> "Зарегистрироваться"
                         else -> "Войти"
@@ -383,11 +536,13 @@ fun LoginScreen(api: AnixartApi, sessionStore: SessionStore) {
         }
 
         Spacer(Modifier.height(16.dp))
-        if (isRegister || isRestore) {
+        if (isRegister || isRestore || isVkRegister) {
             TextButton(
                 onClick = {
                     isRegister = false
                     isRestore = false
+                    isVkRegister = false
+                    vkToken = null
                     hash = null
                     restoreHash = null
                     code = ""
@@ -402,6 +557,25 @@ fun LoginScreen(api: AnixartApi, sessionStore: SessionStore) {
                 )
             }
         } else {
+            Button(
+                onClick = {
+                    error = null
+                    vkLauncher.launch(Intent(context, VkOAuthActivity::class.java))
+                },
+                enabled = !loading,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(50.dp),
+                shape = RoundedCornerShape(8.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0077FF)),
+            ) {
+                Text(
+                    text = "Войти через ВКонтакте",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            Spacer(Modifier.height(8.dp))
             Row {
                 TextButton(
                     onClick = {

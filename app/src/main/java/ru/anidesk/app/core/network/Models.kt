@@ -242,6 +242,7 @@ data class Type(
 data class TypesResponse(
     @SerialName("code") val code: Int = 0,
     @SerialName("types") val types: List<Type> = emptyList(),
+    @SerialName("popular_type_ids") val popularTypeIds: List<Int> = emptyList(),
 )
 
 @Serializable
@@ -385,6 +386,42 @@ data class NotificationComment(
     @SerialName("collection") val collection: UserCollection? = null,
 )
 
+@Serializable
+data class NotificationStatusPreference(
+    @SerialName("status") val status: String = "",
+)
+
+@Serializable
+data class NotificationTypePreference(
+    @SerialName("type") val type: Type? = null,
+)
+
+@Serializable
+data class NotificationPreferenceResponse(
+    @SerialName("code") val code: Int = 0,
+    @SerialName("profileStatusNotificationPreferences") val statusPreferences: List<NotificationStatusPreference> = emptyList(),
+    @SerialName("profileTypeNotificationPreferences") val typePreferences: List<NotificationTypePreference> = emptyList(),
+    @SerialName("is_release_type_notifications_enabled") val isReleaseTypeNotificationsEnabled: Boolean = false,
+    @SerialName("is_episode_notifications_enabled") val isEpisodeNotificationsEnabled: Boolean = false,
+    @SerialName("is_first_episode_notification_enabled") val isFirstEpisodeNotificationsEnabled: Boolean = false,
+    @SerialName("is_related_release_notifications_enabled") val isRelatedReleaseNotificationsEnabled: Boolean = false,
+    @SerialName("is_report_process_notifications_enabled") val isReportProcessNotificationsEnabled: Boolean = false,
+    @SerialName("is_comment_notifications_enabled") val isCommentNotificationsEnabled: Boolean = false,
+    @SerialName("is_my_collection_comment_notifications_enabled") val isMyCollectionCommentNotificationsEnabled: Boolean = false,
+    @SerialName("is_article_notifications_enabled") val isArticleNotificationsEnabled: Boolean = false,
+    @SerialName("is_my_article_comment_notifications_enabled") val isMyArticleCommentNotificationsEnabled: Boolean = false,
+)
+
+@Serializable
+data class NotificationStatusPreferencesRequest(
+    @SerialName("profileStatusNotificationPreferences") val statuses: List<Int>,
+)
+
+@Serializable
+data class NotificationTypePreferencesRequest(
+    @SerialName("profileTypeNotificationPreferences") val types: List<Int>,
+)
+
 // ---------- Подборки ----------
 
 @Serializable
@@ -395,13 +432,20 @@ data class UserCollection(
     @SerialName("title") val title: String = "",
     @SerialName("description") val description: String = "",
     @SerialName("image") val image: String = "",
-    @SerialName("is_closed") val isClosed: Boolean = false,
-    @SerialName("is_protected") val isProtected: Boolean = false,
-    @SerialName("created_at") val createdAt: Long = 0,
+    @SerialName("is_private") val isPrivate: Boolean = false,
+    @SerialName("creation_date") val creationDate: Long = 0,
+    @SerialName("last_update_date") val lastUpdateDate: Long = 0,
     @SerialName("releases") val releases: List<Release> = emptyList(),
-    @SerialName("count_releases") val countReleases: Int = 0,
+    @SerialName("releases_preview") val releasesPreview: List<Release> = emptyList(),
+    @SerialName("release_count") val releaseCount: Int = 0,
     @SerialName("favorites_count") val favoritesCount: Int = 0,
     @SerialName("comment_count") val commentCount: Int = 0,
+    @SerialName("is_favorite") val isFavorite: Boolean = false,
+)
+
+@Serializable
+data class CodeResponse(
+    @SerialName("code") val code: Int = 0,
 )
 
 @Serializable
@@ -415,9 +459,11 @@ data class CreateCollectionRequest(
     @SerialName("title") val title: String,
     @SerialName("description") val description: String = "",
     @SerialName("is_private") val isPrivate: Boolean = false,
+    @SerialName("releases") val releases: List<Int> = emptyList(),
 )
 
 @Serializable
-data class CollectionReleaseRequest(
-    @SerialName("release_id") val releaseId: Int,
+data class EditImageResponse(
+    @SerialName("code") val code: Int = 0,
+    @SerialName("url") val url: String = "",
 )

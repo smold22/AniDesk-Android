@@ -13,7 +13,10 @@ import android.util.Rational
 import android.view.WindowManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -113,6 +116,9 @@ private val PLAYER_USER_AGENT =
 
 private val SPEED_OPTIONS = listOf(0.25f, 0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f, 2.5f, 3f)
 
+/** Шаг перемотки двойным тапом, независимый от настройки «Пропуск». */
+private const val DOUBLE_TAP_SEEK_SEC = 15
+
 @OptIn(UnstableApi::class)
 @Composable
 fun PlayerScreen(
@@ -144,6 +150,8 @@ fun PlayerScreen(
     var speedIndex by remember { mutableIntStateOf(3) }
     var resizeMode by remember { mutableIntStateOf(0) }
     var seekTarget by remember { mutableLongStateOf(-1L) }
+    var tapFeedbackId by remember { mutableIntStateOf(0) }
+    var tapFeedback by remember { mutableStateOf("") }
     var autoPlayNext by remember { mutableStateOf(false) }
     var defaultQuality by remember { mutableIntStateOf(0) }
     var rewindTimeSec by remember { mutableIntStateOf(10) }
@@ -382,7 +390,7 @@ fun PlayerScreen(
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
-            error = "Ошибка воспроизведения: ${e.message}"
+            error = e.networkAwareMessage("Ошибка воспроизведения:")
         } finally {
             loading = false
         }
@@ -416,7 +424,7 @@ fun PlayerScreen(
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
-            error = "Не удалось сменить озвучку: ${e.message}"
+            error = e.networkAwareMessage("Не удалось сменить озвучку:")
         } finally {
             loading = false
         }
@@ -503,6 +511,13 @@ fun PlayerScreen(
         }
     }
 
+    LaunchedEffect(tapFeedbackId) {
+        if (tapFeedbackId > 0) {
+            delay(700)
+            tapFeedback = ""
+        }
+    }
+
     LaunchedEffect(speedIndex) {
         player.playbackParameters = PlaybackParameters(SPEED_OPTIONS[speedIndex])
     }
@@ -525,7 +540,7 @@ fun PlayerScreen(
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
-            error = "Не удалось загрузить серии: ${e.message}"
+            error = e.networkAwareMessage("Не удалось загрузить серии:")
             loading = false
         }
     }
@@ -535,6 +550,43 @@ fun PlayerScreen(
     fun switchEpisode(ep: Episode) {
         savePosition()
         scope.launch { playEpisode(ep) }
+    }
+
+    fun showTapFeedback(text: String) {
+        tapFeedback = text
+        tapFeedbackId++
+    }
+
+    fun handleDoubleTap(x: Float, width: Float) {
+        val step = DOUBLE_TAP_SEEK_SEC * 1000L
+        when {
+            x < width / 3f -> {
+                val target = (player.currentPosition - step).coerceAtLeast(0L)
+                player.seekTo(target)
+                positionMs = target
+                showTapFeedback("−${formatSeekStep(DOUBLE_TAP_SEEK_SEC)}")
+            }
+            x > width * 2f / 3f -> {
+                val target = if (durationMs > 0) {
+                    (player.currentPosition + step).coerceAtMost(durationMs)
+                } else {
+                    player.currentPosition + step
+                }
+                player.seekTo(target)
+                positionMs = target
+                showTapFeedback("+${formatSeekStep(DOUBLE_TAP_SEEK_SEC)}")
+            }
+            else -> {
+                if (player.isPlaying) {
+                    player.pause()
+                    showTapFeedback("Пауза")
+                } else {
+                    player.play()
+                    showTapFeedback("Воспроизведение")
+                }
+            }
+        }
+        controlsVisible = false
     }
 
     Box(
@@ -577,8 +629,31 @@ fun PlayerScreen(
                     },
                 )
             }
-            .clickable {
-                controlsVisible = !controlsVisible
+            .pointerInput(locked, durationMs) {
+                if (locked) return@pointerInput
+                var lastTapTime = 0L
+                var lastTapX = 0f
+                var controlsBeforeTap: Boolean? = null
+                val tapWindow = viewConfiguration.doubleTapTimeoutMillis
+                val tapSlop = 100.dp.toPx()
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val up = waitForUpOrCancellation() ?: return@awaitEachGesture
+                    val isDoubleTap = lastTapTime != 0L &&
+                        down.uptimeMillis - lastTapTime < tapWindow &&
+                        kotlin.math.abs(up.position.x - lastTapX) < tapSlop
+                    if (isDoubleTap) {
+                        lastTapTime = 0L
+                        controlsBeforeTap?.let { controlsVisible = it }
+                        controlsBeforeTap = null
+                        handleDoubleTap(up.position.x, size.width.toFloat())
+                    } else {
+                        lastTapTime = down.uptimeMillis
+                        lastTapX = up.position.x
+                        controlsBeforeTap = controlsVisible
+                        controlsVisible = !controlsVisible
+                    }
+                }
             },
     ) {
         AndroidView(
@@ -617,6 +692,18 @@ fun PlayerScreen(
                 text = sign + formatTime(kotlin.math.abs(delta)),
                 color = Color.White,
                 fontSize = 32.sp,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 20.dp, vertical = 8.dp),
+            )
+        }
+
+        if (tapFeedback.isNotEmpty()) {
+            Text(
+                text = tapFeedback,
+                color = Color.White,
+                fontSize = 28.sp,
                 modifier = Modifier
                     .align(Alignment.Center)
                     .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
@@ -1041,4 +1128,10 @@ private fun formatSpeed(speed: Float): String {
 private fun formatTime(ms: Long): String {
     val totalSec = ms / 1000
     return "%d:%02d".format(totalSec / 60, totalSec % 60)
+}
+
+private fun formatSeekStep(sec: Int): String = when {
+    sec < 60 -> "$sec с"
+    sec % 60 == 0 -> "${sec / 60} мин"
+    else -> "${sec / 60} мин ${sec % 60} с"
 }

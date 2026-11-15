@@ -31,6 +31,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
@@ -51,6 +52,43 @@ fun releaseStatusColor(release: Release): Color {
         4 -> HoldOnOrange
         5 -> DroppedRed
         else -> Color.Transparent
+    }
+}
+
+fun releaseStatusLabel(release: Release): String? {
+    return when (release.profileListStatus) {
+        1 -> "смотрю"
+        2 -> "в планах"
+        3 -> "просмотрено"
+        4 -> "отложено"
+        5 -> "брошено"
+        else -> null
+    }
+}
+
+@Composable
+fun ReleaseStatusBar(
+    release: Release,
+    modifier: Modifier = Modifier,
+    fontSize: TextUnit = 14.sp,
+) {
+    val label = releaseStatusLabel(release) ?: return
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(20.dp)
+            .background(releaseStatusColor(release)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = label,
+            fontSize = fontSize,
+            lineHeight = fontSize,
+            color = Color(0xFFD5DBFF),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(start = 4.dp, end = 4.dp, bottom = 2.dp),
+        )
     }
 }
 
@@ -97,15 +135,11 @@ fun ReleaseCard(
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,
             )
-            if (release.profileListStatus != null && release.profileListStatus > 0) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .fillMaxWidth()
-                        .height(4.dp)
-                        .background(releaseStatusColor(release)),
-                )
-            }
+            ReleaseStatusBar(
+                release = release,
+                modifier = Modifier.align(Alignment.BottomStart),
+                fontSize = 14.sp,
+            )
             if (titleOverlay) {
                 Box(
                     modifier = Modifier
@@ -198,15 +232,11 @@ fun ReleaseListItem(
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,
             )
-            if (release.profileListStatus != null && release.profileListStatus > 0) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .fillMaxWidth()
-                        .height(3.dp)
-                        .background(releaseStatusColor(release)),
-                )
-            }
+            ReleaseStatusBar(
+                release = release,
+                modifier = Modifier.align(Alignment.BottomStart),
+                fontSize = 12.sp,
+            )
         }
         Column(
             modifier = Modifier

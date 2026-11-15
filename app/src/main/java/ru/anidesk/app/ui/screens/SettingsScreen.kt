@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Paid
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PlayCircle
@@ -69,6 +70,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import ru.anidesk.app.core.network.AnixartApi
+import ru.anidesk.app.core.notifications.NotificationPreferences
 import ru.anidesk.app.core.notifications.Notifications
 import ru.anidesk.app.core.settings.SettingsStore
 import ru.anidesk.app.core.update.UpdateManager
@@ -106,13 +108,18 @@ private val REWIND_OPTIONS = listOf(
 )
 
 @Composable
-fun SettingsScreen(api: AnixartApi, settingsStore: SettingsStore, onBack: () -> Unit) {
+fun SettingsScreen(
+    api: AnixartApi,
+    settingsStore: SettingsStore,
+    onBack: () -> Unit,
+    onOpenDonate: () -> Unit = {},
+) {
     var screen by remember { mutableIntStateOf(0) }
     val appContext = LocalContext.current.applicationContext
     val updateManager = remember { UpdateManager(appContext) }
 
     when (screen) {
-        0 -> SettingsMain(settingsStore, onBack = onBack, onOpen = { screen = it })
+        0 -> SettingsMain(api, settingsStore, onBack = onBack, onOpen = { screen = it }, onOpenDonate = onOpenDonate)
         1 -> PlaybackSettings(settingsStore, onBack = { screen = 0 })
         2 -> AppearanceSettings(settingsStore, onBack = { screen = 0 })
         3 -> DataSettings(api, settingsStore, onBack = { screen = 0 })
@@ -123,9 +130,15 @@ fun SettingsScreen(api: AnixartApi, settingsStore: SettingsStore, onBack: () -> 
 // ---------- Главный экран ----------
 
 @Composable
-private fun SettingsMain(settingsStore: SettingsStore, onBack: () -> Unit, onOpen: (Int) -> Unit) {
+private fun SettingsMain(
+    api: AnixartApi,
+    settingsStore: SettingsStore,
+    onBack: () -> Unit,
+    onOpen: (Int) -> Unit,
+    onOpenDonate: () -> Unit,
+) {
     val scope = rememberCoroutineScope()
-    val context = LocalContext.current
+    val appContext = LocalContext.current.applicationContext
     var theme by remember { mutableIntStateOf(0) }
     var showThemeDialog by remember { mutableStateOf(false) }
     var newEpisodesEnabled by remember { mutableStateOf(true) }
@@ -181,12 +194,27 @@ private fun SettingsMain(settingsStore: SettingsStore, onBack: () -> Unit, onOpe
                             newEpisodesEnabled = it
                             scope.launch {
                                 settingsStore.setNewEpisodesEnabled(it)
-                                if (it) Notifications.schedule(context) else Notifications.cancel(context)
+                                if (it) {
+                                    runCatching {
+                                        NotificationPreferences.ensureConfigured(api, settingsStore)
+                                    }
+                                    Notifications.schedule(appContext)
+                                    Notifications.runImmediately(appContext)
+                                } else {
+                                    Notifications.cancel(appContext)
+                                }
                             }
                         },
                         colors = SwitchDefaults.colors(checkedTrackColor = Carmine),
                     )
                 },
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = Icons.Filled.Paid,
+                title = "Поддержать разработку",
+                summary = "Донаты",
+                onClick = onOpenDonate,
             )
             SettingsDivider()
             SettingsRow(
@@ -827,7 +855,7 @@ private fun SubScreenHeader(title: String, onBack: () -> Unit) {
 }
 
 @Composable
-private fun SettingsRow(
+internal fun SettingsRow(
     icon: ImageVector,
     title: String,
     summary: String? = null,
@@ -881,7 +909,7 @@ private fun SettingsRow(
 }
 
 @Composable
-private fun SettingsDivider() {
+internal fun SettingsDivider() {
     HorizontalDivider(
         color = MaterialTheme.colorScheme.surfaceVariant,
         thickness = 1.dp,

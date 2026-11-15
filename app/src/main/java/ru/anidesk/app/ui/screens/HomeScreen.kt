@@ -30,13 +30,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -45,7 +42,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
 import ru.anidesk.app.core.network.AnixartApi
 import ru.anidesk.app.core.network.Release
@@ -57,34 +56,6 @@ import ru.anidesk.app.ui.theme.Carmine
 import ru.anidesk.app.ui.theme.MainText
 import ru.anidesk.app.ui.theme.ThirdText
 
-private sealed interface HomeTab {
-    val title: String
-
-    data class Filter(
-        override val title: String,
-        val sort: Int = 0,
-        val statusId: Int? = null,
-        val categoryId: Int? = null,
-        val country: String? = null,
-    ) : HomeTab
-
-    data object Schedule : HomeTab {
-        override val title = "Расписание"
-    }
-}
-
-private val TABS = listOf<HomeTab>(
-    HomeTab.Filter("Аниме", country = "Япония"),
-    HomeTab.Filter("Дунхуа", country = "Китай"),
-    HomeTab.Filter("Последние", sort = 0),
-    HomeTab.Filter("Онгоинги", statusId = 2),
-    HomeTab.Filter("Анонсы", statusId = 3),
-    HomeTab.Filter("Завершенные", statusId = 1),
-    HomeTab.Filter("Фильмы", categoryId = 2),
-    HomeTab.Filter("OVA", categoryId = 3),
-    HomeTab.Schedule,
-)
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
@@ -94,111 +65,20 @@ fun HomeScreen(
     onOpenSearch: () -> Unit,
     onOpenNotifications: (() -> Unit)? = null,
 ) {
-    var tabIndex by rememberSaveable { mutableIntStateOf(0) }
-    var releases by remember { mutableStateOf<List<Release>>(emptyList()) }
-    var schedule by remember { mutableStateOf<List<Pair<String, List<Release>>>>(emptyList()) }
-    var scheduleDay by remember { mutableIntStateOf(0) }
+    val viewModel: HomeViewModel = viewModel()
+    val state by viewModel.state.collectAsStateWithLifecycle()
     var notificationCount by remember { mutableIntStateOf(0) }
-    var loading by remember { mutableStateOf(true) }
-    var loadingMore by remember { mutableStateOf(false) }
-    var refreshing by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
-    var endReached by remember { mutableStateOf(false) }
-    var page by remember { mutableIntStateOf(0) }
     val viewTypeState by settingsStore.viewType.collectAsStateWithLifecycle(initialValue = 0)
     val listMode = viewTypeState == 1
     val scope = rememberCoroutineScope()
 
-    suspend fun loadPage(pageToLoad: Int, replace: Boolean) {
-        try {
-            val res = when (val tab = TABS[tabIndex]) {
-                is HomeTab.Filter -> api.filterReleases(
-                    page = pageToLoad,
-                    sort = tab.sort,
-                    statusId = tab.statusId,
-                    categoryId = tab.categoryId,
-                    country = tab.country,
-                )
-                HomeTab.Schedule -> return
-            }
-            releases = if (replace) {
-                res.content
-            } else {
-                (releases + res.content).distinctBy { it.id }
-            }
-            endReached = res.content.isEmpty()
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            if (replace) error = "Не удалось загрузить: ${e.message}"
-        } finally {
-            loading = false
-            loadingMore = false
-        }
-    }
-
-    suspend fun refreshCurrentTab() {
-        error = null
-        val tab = TABS[tabIndex]
-        if (tab is HomeTab.Schedule) {
-            try {
-                val res = api.schedule()
-                schedule = listOf(
-                    "Понедельник" to res.monday,
-                    "Вторник" to res.tuesday,
-                    "Среда" to res.wednesday,
-                    "Четверг" to res.thursday,
-                    "Пятница" to res.friday,
-                    "Суббота" to res.saturday,
-                    "Воскресенье" to res.sunday,
-                )
-                scheduleDay = 0
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                error = "Не удалось обновить расписание: ${e.message}"
-            }
-        } else {
-            loadPage(0, replace = true)
-        }
-    }
-
-    LaunchedEffect(tabIndex) {
-        loading = true
-        error = null
-        releases = emptyList()
-        page = 0
-        endReached = false
-        val tab = TABS[tabIndex]
-        if (tab is HomeTab.Schedule) {
-            try {
-                val res = api.schedule()
-                schedule = listOf(
-                    "Понедельник" to res.monday,
-                    "Вторник" to res.tuesday,
-                    "Среда" to res.wednesday,
-                    "Четверг" to res.thursday,
-                    "Пятница" to res.friday,
-                    "Суббота" to res.saturday,
-                    "Воскресенье" to res.sunday,
-                )
-                scheduleDay = 0
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                error = "Не удалось загрузить расписание: ${e.message}"
-            } finally {
-                loading = false
-            }
-        } else {
-            loadPage(0, replace = true)
-        }
-    }
-
-    LaunchedEffect(Unit) {
+    LifecycleResumeEffect(api.token) {
         if (api.token != null) {
-            runCatching { notificationCount = api.notificationCount().count }
+            scope.launch {
+                runCatching { notificationCount = api.notificationCount().count }
+            }
         }
+        onPauseOrDispose { }
     }
 
     Column(
@@ -220,19 +100,20 @@ fun HomeScreen(
                 .padding(horizontal = 12.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            TABS.forEachIndexed { index, tab ->
+            HOME_TABS.forEachIndexed { index, tab ->
+                val selected = state.tabIndex == index
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(8.dp))
-                        .background(if (tabIndex == index) Carmine.copy(alpha = 0.15f) else AltBackground)
-                        .clickable { if (tabIndex != index) tabIndex = index }
+                        .background(if (selected) Carmine.copy(alpha = 0.15f) else AltBackground)
+                        .clickable { viewModel.selectTab(index) }
                         .padding(horizontal = 12.dp, vertical = 7.dp),
                 ) {
                     Text(
                         text = tab.title,
                         fontSize = 14.sp,
-                        fontWeight = if (tabIndex == index) FontWeight.Bold else FontWeight.Normal,
-                        color = if (tabIndex == index) Carmine else ThirdText,
+                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                        color = if (selected) Carmine else ThirdText,
                     )
                 }
             }
@@ -242,23 +123,22 @@ fun HomeScreen(
 
         val content: @Composable () -> Unit = {
             when {
-                loading -> LoadingIndicator()
-                error != null -> ErrorBox(error!!)
-                TABS[tabIndex] is HomeTab.Schedule ->
-                    ScheduleTab(schedule, scheduleDay, onSelectDay = { scheduleDay = it }, onOpenRelease = onOpenRelease)
+                state.loading -> LoadingIndicator()
+                state.error != null -> ErrorBox(state.error!!)
+                HOME_TABS.getOrNull(state.tabIndex) is HomeTab.Schedule ->
+                    ScheduleTab(
+                        state.schedule,
+                        state.scheduleDay,
+                        onSelectDay = { viewModel.selectDay(it) },
+                        onOpenRelease = onOpenRelease,
+                    )
                 else -> {
                     ReleaseGrid(
-                        releases = releases,
+                        releases = state.releases,
                         onOpenRelease = onOpenRelease,
                         listMode = listMode,
-                        loadingMore = loadingMore,
-                        onLoadMore = {
-                            if (!endReached && !loadingMore && releases.isNotEmpty()) {
-                                loadingMore = true
-                                page++
-                                loadPage(page, replace = false)
-                            }
-                        },
+                        loadingMore = state.loadingMore,
+                        onLoadMore = { viewModel.loadNextPage() },
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
@@ -266,14 +146,8 @@ fun HomeScreen(
         }
 
         PullToRefreshBox(
-            isRefreshing = refreshing,
-            onRefresh = {
-                scope.launch {
-                    refreshing = true
-                    refreshCurrentTab()
-                    refreshing = false
-                }
-            },
+            isRefreshing = state.refreshing,
+            onRefresh = { viewModel.refresh() },
             modifier = Modifier.fillMaxSize(),
         ) {
             content()

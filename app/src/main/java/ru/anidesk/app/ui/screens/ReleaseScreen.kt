@@ -36,6 +36,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
@@ -53,6 +54,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.RadioButton
@@ -92,11 +94,13 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.platform.ClipEntry
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import ru.anidesk.app.core.network.AnixartApi
 import ru.anidesk.app.core.network.Dubber
 import ru.anidesk.app.core.network.Episode
 import ru.anidesk.app.core.network.Release
+import ru.anidesk.app.core.network.SessionStore
 import ru.anidesk.app.core.network.Source
 import ru.anidesk.app.core.settings.SettingsStore
 import ru.anidesk.app.downloads.EpisodeDownloader
@@ -133,16 +137,21 @@ private val BOOKMARK_TYPES = listOf(
 @Composable
 fun ReleaseScreen(
     api: AnixartApi,
+    sessionStore: SessionStore,
     settingsStore: SettingsStore,
     releaseId: Int,
     onBack: () -> Unit,
     onOpenRelease: (Int) -> Unit,
     onPlay: (releaseId: Int, dubberId: Int, sourceId: Int, position: Int, sourceName: String) -> Unit,
 ) {
+    val context = LocalContext.current
     var release by remember { mutableStateOf<Release?>(null) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
     var showEpisodePicker by rememberSaveable { mutableStateOf(false) }
+    var showCollectionPicker by rememberSaveable { mutableStateOf(false) }
+    var showNewCollection by rememberSaveable { mutableStateOf(false) }
+    var myId by remember { mutableStateOf<Int?>(null) }
     var isFavorite by remember { mutableStateOf(false) }
     var bookmarkType by remember { mutableIntStateOf(0) }
     var showBookmarkMenu by remember { mutableStateOf(false) }
@@ -152,6 +161,10 @@ fun ReleaseScreen(
     var relatedLoading by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
+
+    LaunchedEffect(Unit) {
+        myId = sessionStore.profileId.first()
+    }
 
     LaunchedEffect(releaseId) {
         loading = true
@@ -177,10 +190,29 @@ fun ReleaseScreen(
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
-            error = "Не удалось загрузить релиз: ${e.message}"
+            error = e.networkAwareMessage("Не удалось загрузить релиз:")
         } finally {
             loading = false
         }
+    }
+
+    if (showNewCollection) {
+        CollectionEditorScreen(
+            api = api,
+            existing = null,
+            initialReleases = listOfNotNull(release),
+            onCancel = { showNewCollection = false },
+            onSaved = { collection, _ ->
+                showNewCollection = false
+                showCollectionPicker = false
+                Toast.makeText(
+                    context,
+                    "Релиз был успешно добавлен в вашу коллекцию ${collection.title}",
+                    Toast.LENGTH_SHORT,
+                ).show()
+            },
+        )
+        return
     }
 
     when {
@@ -329,6 +361,23 @@ fun ReleaseScreen(
                     onOpenRelease = onOpenRelease,
                 )
             }
+            if (myId != null) {
+                IconButton(
+                    onClick = { showCollectionPicker = true },
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .statusBarsPadding()
+                        .padding(top = 6.dp, end = 12.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.PlaylistAdd,
+                        contentDescription = "Добавить в подборку",
+                        tint = MainText,
+                    )
+                }
+            }
             }
         }
     }
@@ -340,6 +389,29 @@ fun ReleaseScreen(
             release = release!!,
             onDismiss = { showEpisodePicker = false },
             onPlay = onPlay,
+        )
+    }
+
+    val currentRelease = release
+    val currentProfileId = myId
+    if (showCollectionPicker && currentRelease != null && currentProfileId != null) {
+        AddToCollectionSheet(
+            api = api,
+            profileId = currentProfileId,
+            releaseId = currentRelease.id,
+            onDismiss = { showCollectionPicker = false },
+            onCreateCollection = {
+                showCollectionPicker = false
+                showNewCollection = true
+            },
+            onAdded = { collection ->
+                showCollectionPicker = false
+                Toast.makeText(
+                    context,
+                    "Релиз был успешно добавлен в вашу коллекцию ${collection.title}",
+                    Toast.LENGTH_SHORT,
+                ).show()
+            },
         )
     }
 }
@@ -441,6 +513,16 @@ private fun ReleaseHeader(r: Release, onBack: () -> Unit) {
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(r.status?.name ?: "", fontSize = 13.sp, color = ThirdText)
+            }
+            if (r.status?.id == 2) {
+                Format.getBroadcastDay(r.broadcast)?.let { day ->
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        "День выхода: $day",
+                        fontSize = 12.sp,
+                        color = ThirdText,
+                    )
+                }
             }
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -637,13 +719,20 @@ private fun EpisodePickerSheet(
     var selectedDubber by remember { mutableStateOf<Int?>(null) }
     var selectedSource by remember { mutableStateOf<Int?>(null) }
     var loadingEpisodes by remember { mutableStateOf(true) }
+    var error by remember { mutableStateOf<String?>(null) }
 
     suspend fun loadEpisodes() {
         val dubberId = selectedDubber ?: return
         val sourceId = selectedSource ?: return
         loadingEpisodes = true
+        error = null
         try {
             episodes = api.getEpisodes(release.id, dubberId, sourceId).episodes
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            episodes = emptyList()
+            error = e.networkAwareMessage("Не удалось загрузить серии:")
         } finally {
             loadingEpisodes = false
         }
@@ -669,6 +758,10 @@ private fun EpisodePickerSheet(
                     loadEpisodes()
                 }
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            error = e.networkAwareMessage("Не удалось загрузить серии:")
         } finally {
             loadingEpisodes = false
         }
@@ -710,20 +803,29 @@ private fun EpisodePickerSheet(
             selectedDubber = selectedDubber,
             selectedSource = selectedSource,
             loadingEpisodes = loadingEpisodes,
+            error = error,
             onDubberSelect = { d ->
                 selectedDubber = d.id
                 selectedSource = null
                 sources = emptyList()
                 episodes = emptyList()
+                error = null
                 scope.launch {
-                    val res = api.getDubberSources(release.id, d.id)
-                    sources = res.sources
-                    val src = res.sources.firstOrNull()?.id
-                    selectedSource = src
-                    if (src != null) {
-                        settingsStore.setDubberSource(release.id, d.id, src)
+                    try {
+                        val res = api.getDubberSources(release.id, d.id)
+                        sources = res.sources
+                        val src = res.sources.firstOrNull()?.id
+                        selectedSource = src
+                        if (src != null) {
+                            settingsStore.setDubberSource(release.id, d.id, src)
+                        }
+                        loadEpisodes()
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        error = e.networkAwareMessage("Не удалось загрузить серии:")
+                        loadingEpisodes = false
                     }
-                    loadEpisodes()
                 }
             },
             onSourceSelect = { s ->
@@ -731,7 +833,7 @@ private fun EpisodePickerSheet(
                 scope.launch {
                     loadEpisodes()
                     selectedDubber?.let {
-                        settingsStore.setDubberSource(release.id, it, s.id)
+                        runCatching { settingsStore.setDubberSource(release.id, it, s.id) }
                     }
                 }
             },
@@ -751,6 +853,7 @@ private fun EpisodePickerContent(
     selectedDubber: Int?,
     selectedSource: Int?,
     loadingEpisodes: Boolean,
+    error: String?,
     onDubberSelect: (Dubber) -> Unit,
     onSourceSelect: (Source) -> Unit,
     onPlay: (Int, Int, Int, Int, String) -> Unit,
@@ -839,6 +942,11 @@ private fun EpisodePickerContent(
 
         when {
             loadingEpisodes -> Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { LoadingIndicator() }
+            error != null -> Text(
+                text = error,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(24.dp),
+            )
             episodes.isEmpty() -> Text("Нет серий", color = ThirdText, modifier = Modifier.padding(24.dp))
             else -> LazyColumn(
                 modifier = Modifier.weight(1f),

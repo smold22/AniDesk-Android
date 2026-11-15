@@ -15,8 +15,8 @@ android {
         applicationId = "ru.anidesk.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 133
-        versionName = "1.4.0"
+        versionCode = 135
+        versionName = "1.5.0"
     }
 
     buildTypes {
@@ -79,4 +79,6 @@ dependencies {
 
     implementation("io.coil-kt.coil3:coil-compose:3.3.0")
     implementation("io.coil-kt.coil3:coil-network-okhttp:3.3.0")
+
+    implementation("com.airbnb.android:lottie-compose:6.7.1")
 }

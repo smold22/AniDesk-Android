@@ -25,11 +25,11 @@ val PlayerRed = Carmine
 val Blue = Color(0xFF5D68A1)
 val BrightSun = Color(0xFFFFD740)
 val Lavender = Color(0xFFE8DEF7)
-val WatchingGreen = Color(0xFF66BB6C)
-val PlanPurple = Color(0xFF9314DC)
-val CompletedBlue = Blue
-val HoldOnOrange = Color(0xFFDF960E)
-val DroppedRed = Color(0xFFBE1414)
+val WatchingGreen = Color(0xE666BB6C)
+val PlanPurple = Color(0xE6B566BB)
+val CompletedBlue = Color(0xE65C6CC0)
+val HoldOnOrange = Color(0xE6FFCA28)
+val DroppedRed = Color(0xE6EF5450)
 
 // ---- Семантические цвета (свои для тёмной/светлой темы) ----
 data class AniColors(

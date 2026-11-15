@@ -5,11 +5,15 @@ import io.ktor.client.call.body
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.request.forms.MultiPartFormDataContent
+import io.ktor.client.request.forms.formData
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.http.ContentType
+import io.ktor.http.Headers
+import io.ktor.http.HttpHeaders
 import io.ktor.http.Parameters
 import io.ktor.http.contentType
 import io.ktor.http.formUrlEncode
@@ -76,6 +80,56 @@ class AnixartApi(
             "login" to login,
             "email" to email,
             "password" to password,
+            "hash" to hash,
+            "code" to code,
+        )
+        val response = client.post("$baseUrl/auth/verify") {
+            header("User-Agent", USER_AGENT)
+            contentType(ContentType.Application.FormUrlEncoded)
+            setBody(form.formUrlEncode())
+        }
+        return response.body()
+    }
+
+    suspend fun signInWithVk(vkAccessToken: String): LoginResponse {
+        val form = listOf("vkAccessToken" to vkAccessToken)
+        val response = client.post("$baseUrl/auth/vk") {
+            header("User-Agent", USER_AGENT)
+            contentType(ContentType.Application.FormUrlEncoded)
+            setBody(form.formUrlEncode())
+        }
+        return response.body()
+    }
+
+    suspend fun signUpWithVk(
+        login: String,
+        email: String,
+        vkAccessToken: String,
+    ): SignUpResponse {
+        val form = listOf(
+            "login" to login,
+            "email" to email,
+            "vkAccessToken" to vkAccessToken,
+        )
+        val response = client.post("$baseUrl/auth/vk") {
+            header("User-Agent", USER_AGENT)
+            contentType(ContentType.Application.FormUrlEncoded)
+            setBody(form.formUrlEncode())
+        }
+        return response.body()
+    }
+
+    suspend fun verifyVk(
+        login: String,
+        email: String,
+        vkAccessToken: String,
+        hash: String,
+        code: String,
+    ): VerifyResponse {
+        val form = listOf(
+            "login" to login,
+            "email" to email,
+            "vkAccessToken" to vkAccessToken,
             "hash" to hash,
             "code" to code,
         )
@@ -246,28 +300,55 @@ class AnixartApi(
 
     suspend fun notificationCount(): NotificationCountResponse = apiGet("/notification/count")
 
-    /** Серверный фид уведомлений (1-индексированные страницы, как в AnixartM). */
+    /**
+     * Серверный фид уведомлений. Публичные методы принимают страницу с 1,
+     * но API нумерует страницы с 0 (как related/filter/history).
+     */
     suspend fun notificationEpisodes(page: Int): PageableResponse<EpisodeNotification> =
-        apiGet("/notification/episodes/$page")
+        apiGet("/notification/episodes/${page - 1}")
 
     suspend fun notificationRelatedReleases(page: Int): PageableResponse<RelatedReleaseNotification> =
-        apiGet("/notification/related/release/$page")
+        apiGet("/notification/related/release/${page - 1}")
 
     suspend fun notificationFriends(page: Int): PageableResponse<FriendNotification> =
-        apiGet("/notification/friends/$page")
+        apiGet("/notification/friends/${page - 1}")
 
     suspend fun notificationReleaseComments(page: Int): PageableResponse<ReleaseCommentNotification> =
-        apiGet("/notification/releaseComments/$page")
+        apiGet("/notification/releaseComments/${page - 1}")
 
     suspend fun notificationCollectionComments(page: Int): PageableResponse<CollectionCommentNotification> =
-        apiGet("/notification/collectionComments/$page")
+        apiGet("/notification/collectionComments/${page - 1}")
 
     suspend fun notificationMyCollectionComments(page: Int): PageableResponse<MyCollectionCommentNotification> =
-        apiGet("/notification/myCollectionComments/$page")
+        apiGet("/notification/myCollectionComments/${page - 1}")
 
-    suspend fun readNotifications() = apiPost<Unit>("/notification/read")
+    suspend fun readNotifications() = apiGet<Unit>("/notification/read")
 
-    suspend fun removeAllNotifications() = apiPost<Unit>("/notification/remove/all")
+    suspend fun removeAllNotifications() = apiGet<Unit>("/notification/delete/all")
+
+    // ---------- Notification preferences ----------
+
+    suspend fun notificationPreferences(): NotificationPreferenceResponse =
+        apiGet("/profile/preference/notification/my")
+
+    /** Переключает настройку. Типы: episode, episode/first, related/release, comment и т.д. */
+    suspend fun editNotificationPreference(type: String) =
+        apiGet<Unit>("/profile/preference/notification/$type/edit")
+
+    suspend fun editNotificationStatusPreferences(statuses: List<Int>) =
+        apiPostJson<Unit>(
+            "/profile/preference/notification/status/edit",
+            body = NotificationStatusPreferencesRequest(statuses),
+        )
+
+    suspend fun editNotificationTypePreferences(types: List<Int>) =
+        apiPostJson<Unit>(
+            "/profile/preference/notification/type/edit",
+            body = NotificationTypePreferencesRequest(types),
+        )
+
+    suspend fun popularTypeIds(): List<Int> =
+        apiGet<TypesResponse>("/type/all").popularTypeIds
 
     // ---------- Collections ----------
 
@@ -278,25 +359,69 @@ class AnixartApi(
         title: String,
         description: String = "",
         isPrivate: Boolean = false,
+        releases: List<Int> = emptyList(),
     ): CollectionResponse = apiPostJson(
         "/collectionMy/create",
         body = CreateCollectionRequest(
             title = title,
             description = description,
             isPrivate = isPrivate,
+            releases = releases,
+        ),
+    )
+
+    suspend fun updateCollection(
+        id: Int,
+        title: String,
+        description: String = "",
+        isPrivate: Boolean = false,
+        releases: List<Int> = emptyList(),
+    ): CollectionResponse = apiPostJson(
+        "/collectionMy/edit/$id",
+        body = CreateCollectionRequest(
+            title = title,
+            description = description,
+            isPrivate = isPrivate,
+            releases = releases,
         ),
     )
 
     suspend fun collection(id: Int): UserCollection? =
         apiGet<CollectionResponse>("/collection/$id").collection
 
+    suspend fun uploadCollectionImage(
+        id: Int,
+        bytes: ByteArray,
+        fileName: String = "cover.jpg",
+        mimeType: String = "image/jpeg",
+    ): EditImageResponse {
+        val body = formData {
+            append(
+                "image",
+                bytes,
+                Headers.build {
+                    append(HttpHeaders.ContentType, mimeType)
+                    append(HttpHeaders.ContentDisposition, "filename=\"$fileName\"")
+                },
+            )
+            append("name", "image")
+        }
+        val response = client.post("$baseUrl/collectionMy/editImage/$id") {
+            header("User-Agent", USER_AGENT)
+            token?.let { url.parameters.append("token", it) }
+            setBody(MultiPartFormDataContent(body))
+        }
+        return response.body()
+    }
+
     suspend fun collectionReleases(id: Int, page: Int): PageableResponse<Release> =
         apiGet("/collection/$id/releases/$page")
 
-    suspend fun collectionReleaseAdd(id: Int, releaseId: Int) =
-        apiPostJson<Unit>("/collectionMy/release/add/$id", body = CollectionReleaseRequest(releaseId))
+    suspend fun collectionReleaseAdd(id: Int, releaseId: Int): CodeResponse =
+        apiGet("/collectionMy/release/add/$id", mapOf("release_id" to releaseId.toString()))
 
-    suspend fun deleteCollection(id: Int) = apiPost<Unit>("/collectionMy/delete/$id")
+    suspend fun deleteCollection(id: Int): CodeResponse =
+        apiGet("/collectionMy/delete/$id")
 
     suspend fun profileCollections(id: Int, page: Int): PageableResponse<UserCollection> =
         apiGet("/collection/all/profile/$id/$page")

@@ -51,7 +51,7 @@ fun FavoritesScreen(
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
-            error = "Не удалось загрузить: ${e.message}"
+            error = e.networkAwareMessage("Не удалось загрузить:")
         } finally {
             loading = false
         }

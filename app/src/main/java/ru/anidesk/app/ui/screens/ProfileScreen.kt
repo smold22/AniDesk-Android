@@ -53,6 +53,7 @@ import kotlinx.coroutines.launch
 import ru.anidesk.app.core.network.AnixartApi
 import ru.anidesk.app.core.network.Release
 import ru.anidesk.app.core.network.SessionStore
+import ru.anidesk.app.core.settings.SettingsStore
 import ru.anidesk.app.ui.components.ErrorBox
 import ru.anidesk.app.ui.components.HeaderIconButton
 import ru.anidesk.app.ui.components.LoadingIndicator
@@ -67,6 +68,7 @@ import ru.anidesk.app.ui.theme.ThirdText
 fun ProfileScreen(
     api: AnixartApi,
     sessionStore: SessionStore,
+    settingsStore: SettingsStore,
     onOpenRelease: (Int) -> Unit,
     onBack: () -> Unit,
     onOpenLogin: () -> Unit,
@@ -97,7 +99,7 @@ fun ProfileScreen(
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
-            error = "Не удалось загрузить профиль: ${e.message}"
+            error = e.networkAwareMessage("Не удалось загрузить профиль:")
         } finally {
             loading = false
         }
@@ -158,7 +160,14 @@ fun ProfileScreen(
                         }
                         Button(
                             onClick = {
-                                scope.launch { sessionStore.clear() }
+                                scope.launch {
+                                    settingsStore.setServerNotificationPrefsVersion(0)
+                                    settingsStore.setNotificationsInitialized(false)
+                                    settingsStore.setNotifiedNotificationIds(emptySet())
+                                    settingsStore.setEpisodeBaseline(emptyMap())
+                                    settingsStore.setEpisodeBaselineInitialized(false)
+                                    sessionStore.clear()
+                                }
                             },
                             shape = RoundedCornerShape(8.dp),
                             colors = ButtonDefaults.buttonColors(

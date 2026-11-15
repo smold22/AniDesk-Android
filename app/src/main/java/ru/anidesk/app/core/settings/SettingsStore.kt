@@ -30,8 +30,10 @@ class SettingsStore(private val context: Context) {
     private val DOWNLOADED_EPISODES = stringSetPreferencesKey("downloaded_episodes")
     private val NEW_EPISODES_ENABLED = booleanPreferencesKey("new_episodes_notifications_enabled")
     private val EPISODE_BASELINE = stringSetPreferencesKey("episode_baseline")
+    private val EPISODE_BASELINE_INITIALIZED = booleanPreferencesKey("episode_baseline_initialized")
     private val NOTIFICATION_SEEN = stringSetPreferencesKey("notification_seen_ids")
     private val NOTIFICATIONS_INITIALIZED = booleanPreferencesKey("notifications_initialized")
+    private val SERVER_PREFS_VERSION = intPreferencesKey("server_notification_prefs_version")
 
     /** 0 = системная, 1 = светлая, 2 = тёмная */
     val theme: Flow<Int> = context.settingsDataStore.data.map { it[THEME] ?: 0 }
@@ -116,6 +118,14 @@ class SettingsStore(private val context: Context) {
         }
     }
 
+    /** Прошла ли первая синхронизация базовой линии серий из закладок. */
+    suspend fun getEpisodeBaselineInitialized(): Boolean =
+        context.settingsDataStore.data.first()[EPISODE_BASELINE_INITIALIZED] ?: false
+
+    suspend fun setEpisodeBaselineInitialized(value: Boolean) {
+        context.settingsDataStore.edit { prefs -> prefs[EPISODE_BASELINE_INITIALIZED] = value }
+    }
+
     /** id серверных уведомлений, которые уже были показаны (тип:notificationId). */
     val notifiedNotificationIds: Flow<Set<String>> =
         context.settingsDataStore.data.map { it[NOTIFICATION_SEEN] ?: emptySet() }
@@ -136,6 +146,16 @@ class SettingsStore(private val context: Context) {
     suspend fun setNotificationsInitialized(value: Boolean) {
         context.settingsDataStore.edit { prefs ->
             prefs[NOTIFICATIONS_INITIALIZED] = value
+        }
+    }
+
+    /** Версия серверных настроек уведомлений, применённых приложением. */
+    suspend fun getServerNotificationPrefsVersion(): Int =
+        context.settingsDataStore.data.first()[SERVER_PREFS_VERSION] ?: 0
+
+    suspend fun setServerNotificationPrefsVersion(value: Int) {
+        context.settingsDataStore.edit { prefs ->
+            prefs[SERVER_PREFS_VERSION] = value
         }
     }
 

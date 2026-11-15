@@ -47,6 +47,7 @@ import ru.anidesk.app.ui.screens.AccountScreen
 import ru.anidesk.app.ui.screens.BookmarksScreen
 import ru.anidesk.app.ui.screens.CollectionsScreen
 import ru.anidesk.app.ui.screens.DiscoverScreen
+import ru.anidesk.app.ui.screens.DonateScreen
 import ru.anidesk.app.ui.screens.FavoritesScreen
 import ru.anidesk.app.ui.screens.HistoryScreen
 import ru.anidesk.app.ui.screens.HomeScreen
@@ -238,12 +239,17 @@ private fun MainNavHost(
                 api = api,
                 settingsStore = settingsStore,
                 onBack = { navController.popBackStack() },
+                onOpenDonate = { navController.navigate("donate") { launchSingleTop = true } },
             )
+        }
+        composable("donate") {
+            DonateScreen(navController)
         }
         composable("profile") {
             ProfileScreen(
                 api = api,
                 sessionStore = sessionStore,
+                settingsStore = settingsStore,
                 onOpenRelease = onOpenRelease,
                 onBack = { navController.navigate("home") { launchSingleTop = true } },
                 onOpenLogin = {

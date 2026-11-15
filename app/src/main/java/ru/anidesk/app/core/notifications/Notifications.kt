@@ -83,14 +83,22 @@ object Notifications {
     /**
      * Показывает системное уведомление. При [releaseId] > 0 тап открывает экран релиза,
      * иначе — просто открывает приложение.
+     *
+     * @return true, если уведомление действительно было отправлено.
      */
-    fun show(context: Context, id: Int, title: String, text: String, releaseId: Int? = null) {
+    fun show(
+        context: Context,
+        id: Int,
+        title: String,
+        text: String,
+        releaseId: Int? = null,
+    ): Boolean {
         ensureChannel(context)
         if (Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
             PackageManager.PERMISSION_GRANTED
         ) {
-            return
+            return false
         }
         val intent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -112,8 +120,9 @@ object Notifications {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_EVENT)
             .build()
-        runCatching {
+        return runCatching {
             NotificationManagerCompat.from(context).notify(id, notification)
-        }
+            true
+        }.getOrDefault(false)
     }
 }
