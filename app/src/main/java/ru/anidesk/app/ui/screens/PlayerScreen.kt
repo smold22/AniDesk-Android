@@ -179,9 +179,7 @@ fun PlayerScreen(
             .apply { repeatMode = ExoPlayer.REPEAT_MODE_OFF }
     }
 
-    val mediaSession = remember {
-        MediaSession.Builder(context.applicationContext, player).build()
-    }
+    val mediaSession = remember { mutableStateOf<MediaSession?>(null) }
 
     fun positionKey(position: Int) = "$releaseId:$currentSourceId:$position"
 
@@ -240,14 +238,35 @@ fun PlayerScreen(
     }
 
     val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
+    DisposableEffect(lifecycleOwner, player) {
+        fun createMediaSession() {
+            mediaSession.value?.release()
+            mediaSession.value = MediaSession.Builder(context.applicationContext, player).build()
+        }
+
+        if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+            createMediaSession()
+        }
+
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) {
-                if (player.isPlaying) player.pause()
+            when (event) {
+                Lifecycle.Event.ON_START -> {
+                    if (mediaSession.value == null) createMediaSession()
+                }
+                Lifecycle.Event.ON_STOP -> {
+                    player.pause()
+                    mediaSession.value?.release()
+                    mediaSession.value = null
+                }
+                else -> Unit
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            mediaSession.value?.release()
+            mediaSession.value = null
+        }
     }
 
     DisposableEffect(isPlaying) {
@@ -280,10 +299,12 @@ fun PlayerScreen(
                     if (player.playWhenReady) player.volume = 0.2f
                 }
                 AudioManager.AUDIOFOCUS_GAIN -> {
-                    if (wasPlaying || player.playWhenReady) {
+                    if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) &&
+                        (wasPlaying || player.playWhenReady)
+                    ) {
                         player.play()
-                        player.volume = 1f
                     }
+                    player.volume = 1f
                     wasPlaying = false
                 }
             }
@@ -433,7 +454,12 @@ fun PlayerScreen(
     DisposableEffect(player) {
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(playing: Boolean) {
-                isPlaying = playing
+                if (playing &&
+                    !lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+                ) {
+                    player.pause()
+                }
+                isPlaying = player.isPlaying
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
@@ -490,7 +516,8 @@ fun PlayerScreen(
         player.addListener(listener)
         onDispose {
             player.removeListener(listener)
-            mediaSession.release()
+            mediaSession.value?.release()
+            mediaSession.value = null
             player.release()
         }
     }
