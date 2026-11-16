@@ -22,8 +22,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ru.anidesk.app.core.network.AnixartApi
 import ru.anidesk.app.core.network.Release
+import ru.anidesk.app.core.settings.SettingsStore
 import ru.anidesk.app.ui.components.ErrorBox
 import ru.anidesk.app.ui.components.LoadingIndicator
 import ru.anidesk.app.ui.components.ReleaseGrid
@@ -33,6 +35,7 @@ import ru.anidesk.app.ui.theme.ThirdText
 @Composable
 fun FavoritesScreen(
     api: AnixartApi,
+    settingsStore: SettingsStore,
     onOpenRelease: (Int) -> Unit,
     onBack: () -> Unit,
 ) {
@@ -42,6 +45,8 @@ fun FavoritesScreen(
     var endReached by remember { mutableStateOf(false) }
     var page by remember { mutableIntStateOf(0) }
     var error by remember { mutableStateOf<String?>(null) }
+    val viewType by settingsStore.viewType.collectAsStateWithLifecycle(initialValue = 0)
+    val listMode = viewType == 1
 
     LaunchedEffect(Unit) {
         try {
@@ -77,6 +82,8 @@ fun FavoritesScreen(
             else -> ReleaseGrid(
                 releases = releases,
                 onOpenRelease = onOpenRelease,
+                listMode = listMode,
+                loadingMore = loadingMore,
                 onLoadMore = {
                     if (!endReached && !loadingMore && releases.isNotEmpty()) {
                         loadingMore = true

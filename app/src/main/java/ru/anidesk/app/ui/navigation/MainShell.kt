@@ -214,6 +214,7 @@ private fun MainNavHost(
         composable("discover") {
             DiscoverScreen(
                 api = api,
+                settingsStore = settingsStore,
                 onOpenRelease = onOpenRelease,
                 onBack = { navController.navigate("home") { launchSingleTop = true } },
             )
@@ -230,6 +231,7 @@ private fun MainNavHost(
             CollectionsScreen(
                 api = api,
                 sessionStore = sessionStore,
+                settingsStore = settingsStore,
                 onOpenRelease = onOpenRelease,
                 onBack = { navController.navigate("home") { launchSingleTop = true } },
             )
@@ -273,6 +275,7 @@ private fun MainNavHost(
         composable("history") {
             HistoryScreen(
                 api = api,
+                settingsStore = settingsStore,
                 onOpenRelease = onOpenRelease,
                 onBack = { navController.popBackStack() },
             )
@@ -280,6 +283,7 @@ private fun MainNavHost(
         composable("favorites") {
             FavoritesScreen(
                 api = api,
+                settingsStore = settingsStore,
                 onOpenRelease = onOpenRelease,
                 onBack = { navController.popBackStack() },
             )

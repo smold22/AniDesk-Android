@@ -45,11 +45,11 @@ object Notifications {
         }
     }
 
-    /** Планирует периодическую проверку уведомлений (мин. интервал 15 мин). */
+    /** Планирует периодическую проверку уведомлений (мин. интервал 15 мин, используем 30). */
     fun schedule(context: Context) {
         ensureChannel(context)
         val request = PeriodicWorkRequestBuilder<EpisodeNotificationsWorker>(
-            15, TimeUnit.MINUTES,
+            30, TimeUnit.MINUTES,
         ).setConstraints(
             Constraints.Builder()
                 .setRequiredNetworkType(NetworkType.CONNECTED)

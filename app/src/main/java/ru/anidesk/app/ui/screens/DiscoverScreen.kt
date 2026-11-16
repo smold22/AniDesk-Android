@@ -32,9 +32,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.flow.distinctUntilChanged
 import ru.anidesk.app.core.network.AnixartApi
 import ru.anidesk.app.core.network.Release
+import ru.anidesk.app.core.settings.SettingsStore
 import ru.anidesk.app.ui.components.ErrorBox
 import ru.anidesk.app.ui.components.LoadingIndicator
 import ru.anidesk.app.ui.components.ReleaseCard
@@ -46,6 +48,7 @@ import ru.anidesk.app.ui.theme.MainText
 @Composable
 fun DiscoverScreen(
     api: AnixartApi,
+    settingsStore: SettingsStore,
     onOpenRelease: (Int) -> Unit,
     onBack: () -> Unit,
 ) {
@@ -59,6 +62,8 @@ fun DiscoverScreen(
     var recommendationsLoading by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
+    val viewType by settingsStore.viewType.collectAsStateWithLifecycle(initialValue = 0)
+    val listMode = viewType == 1
 
     LaunchedEffect(Unit) {
         try {
@@ -107,6 +112,7 @@ fun DiscoverScreen(
                 ReleaseGrid(
                     releases = watching,
                     onOpenRelease = onOpenRelease,
+                    listMode = listMode,
                     onLoadMore = {
                         loadMore(
                             current = watching,

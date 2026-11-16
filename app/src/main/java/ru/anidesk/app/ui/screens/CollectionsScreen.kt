@@ -64,11 +64,13 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ru.anidesk.app.core.network.AnixartApi
 import ru.anidesk.app.core.network.Profile
 import ru.anidesk.app.core.network.Release
 import ru.anidesk.app.core.network.SessionStore
 import ru.anidesk.app.core.network.UserCollection
+import ru.anidesk.app.core.settings.SettingsStore
 import ru.anidesk.app.ui.components.ErrorBox
 import ru.anidesk.app.ui.components.LoadingIndicator
 import ru.anidesk.app.ui.components.ReleaseGrid
@@ -87,9 +89,12 @@ import ru.anidesk.app.ui.theme.ThirdText
 fun CollectionsScreen(
     api: AnixartApi,
     sessionStore: SessionStore,
+    settingsStore: SettingsStore,
     onOpenRelease: (Int) -> Unit,
     onBack: () -> Unit,
 ) {
+    val viewType by settingsStore.viewType.collectAsStateWithLifecycle(initialValue = 0)
+    val listMode = viewType == 1
     var collections by remember { mutableStateOf<List<UserCollection>>(emptyList()) }
     var selected by remember { mutableStateOf<UserCollection?>(null) }
     var loading by remember { mutableStateOf(true) }
@@ -332,6 +337,7 @@ fun CollectionsScreen(
                     else -> ReleaseGrid(
                         releases = releases,
                         onOpenRelease = onOpenRelease,
+                        listMode = listMode,
                         modifier = Modifier.fillMaxSize(),
                         onLoadMore = { loadMoreReleases() },
                         header = {

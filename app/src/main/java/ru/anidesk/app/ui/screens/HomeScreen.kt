@@ -131,6 +131,7 @@ fun HomeScreen(
                         state.scheduleDay,
                         onSelectDay = { viewModel.selectDay(it) },
                         onOpenRelease = onOpenRelease,
+                        listMode = listMode,
                     )
                 else -> {
                     ReleaseGrid(
@@ -235,6 +236,7 @@ private fun ScheduleTab(
     selectedDay: Int,
     onSelectDay: (Int) -> Unit,
     onOpenRelease: (Int) -> Unit,
+    listMode: Boolean = false,
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
@@ -271,6 +273,7 @@ private fun ScheduleTab(
             ReleaseGrid(
                 releases = releases,
                 onOpenRelease = onOpenRelease,
+                listMode = listMode,
                 modifier = Modifier.fillMaxSize(),
             )
         }

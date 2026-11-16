@@ -32,6 +32,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -41,6 +42,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -53,40 +55,17 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import ru.anidesk.app.core.network.AnixartApi
+import ru.anidesk.app.core.notifications.EpisodeNotificationsWorker
+import ru.anidesk.app.core.notifications.NotificationHistoryStore
+import ru.anidesk.app.core.notifications.StoredNotification
 import ru.anidesk.app.ui.components.ErrorBox
 import ru.anidesk.app.ui.components.Format
 import ru.anidesk.app.ui.components.HeaderIconButton
-import ru.anidesk.app.ui.components.LoadingIndicator
 import ru.anidesk.app.ui.theme.AltBackground
 import ru.anidesk.app.ui.theme.Carmine
 import ru.anidesk.app.ui.theme.MainText
 import ru.anidesk.app.ui.theme.SecondaryText
 import ru.anidesk.app.ui.theme.ThirdText
-
-sealed interface AnixNotification {
-    val id: Long
-    val timestamp: Long
-    val isNew: Boolean
-
-    data class Episode(
-        override val id: Long,
-        override val timestamp: Long,
-        override val isNew: Boolean,
-        val releaseId: Int,
-        val title: String,
-        val episodeName: String,
-        val image: String?,
-    ) : AnixNotification
-
-    data class RelatedRelease(
-        override val id: Long,
-        override val timestamp: Long,
-        override val isNew: Boolean,
-        val releaseId: Int,
-        val title: String,
-        val image: String?,
-    ) : AnixNotification
-}
 
 private enum class NotifFilter(val title: String) {
     ALL("Все"),
@@ -101,92 +80,89 @@ fun NotificationsScreen(
     onOpenRelease: (Int) -> Unit,
     onBack: () -> Unit,
 ) {
+    val context = LocalContext.current
+    val historyStore = remember(context) { NotificationHistoryStore(context) }
+    val storedNotifications by historyStore.notifications.collectAsState(initial = emptyList())
+
     var selectedFilter by remember { mutableStateOf(NotifFilter.ALL) }
-    var allNotifications by remember { mutableStateOf<List<AnixNotification>>(emptyList()) }
-    var loading by remember { mutableStateOf(true) }
     var refreshing by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
-    suspend fun load() {
+    suspend fun syncFromApi() {
         error = null
         try {
-            coroutineScope {
+            val toStore = coroutineScope {
                 suspend fun <T> fetch(block: suspend () -> List<T>): List<T> =
                     runCatching { block() }.getOrDefault(emptyList())
 
                 val epDeferred = async { fetch { api.notificationEpisodes(1).content } }
                 val rrDeferred = async { fetch { api.notificationRelatedReleases(1).content } }
-
                 val epList = epDeferred.await()
                 val rrList = rrDeferred.await()
 
-                val result = mutableListOf<AnixNotification>()
+                val result = mutableListOf<StoredNotification>()
 
                 epList.forEach { n ->
                     val ep = n.episode
                     val rel = ep?.release
                     val title = rel?.titleRu?.ifBlank { rel.title } ?: "Новая серия"
                     val releaseId = (ep?.releaseId ?: 0L).takeIf { it > 0L }?.toInt() ?: rel?.id ?: 0
-                    val epLabel = ep?.name?.ifBlank { ep.position.toString() }.orEmpty()
-                    result += AnixNotification.Episode(
-                        id = n.id,
-                        timestamp = n.timestamp,
-                        isNew = n.isNew,
-                        releaseId = releaseId,
+                    val epLabel = ep?.name?.ifBlank { ep.position.takeIf { p -> p > 0 }?.toString() }.orEmpty()
+                    val ts = if (n.timestamp > 0) n.timestamp else System.currentTimeMillis()
+                    result += StoredNotification(
+                        key = "ep:${if (n.id > 0) n.id else "$releaseId:$epLabel:$ts"}",
+                        type = EpisodeNotificationsWorker.TYPE_EPISODE,
                         title = title,
-                        episodeName = epLabel,
+                        episodeName = epLabel.ifBlank { null },
+                        releaseId = releaseId,
                         image = rel?.image ?: rel?.poster,
+                        timestamp = ts,
+                        isNew = n.isNew,
                     )
                 }
 
                 rrList.forEach { n ->
                     val rel = n.release
+                    val releaseId = rel?.id ?: 0
                     val title = rel?.titleRu?.ifBlank { rel.title } ?: "Связанный релиз"
-                    result += AnixNotification.RelatedRelease(
-                        id = n.id,
-                        timestamp = n.timestamp,
-                        isNew = n.isNew,
-                        releaseId = rel?.id ?: 0,
+                    val ts = if (n.timestamp > 0) n.timestamp else System.currentTimeMillis()
+                    result += StoredNotification(
+                        key = "rr:${if (n.id > 0) n.id else "$releaseId:$ts"}",
+                        type = EpisodeNotificationsWorker.TYPE_RELEASE,
                         title = title,
+                        episodeName = null,
+                        releaseId = releaseId,
                         image = rel?.image ?: rel?.poster,
+                        timestamp = ts,
+                        isNew = n.isNew,
                     )
                 }
-
-                allNotifications = result.sortedByDescending { it.timestamp }
-                runCatching { api.readNotifications() }
+                result
             }
+
+            historyStore.upsertAll(toStore)
+            historyStore.markAllRead()
+            runCatching { api.readNotifications() }
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
             error = e.networkAwareMessage("Не удалось загрузить:")
         } finally {
-            loading = false
             refreshing = false
         }
     }
 
-    LaunchedEffect(Unit) { load() }
-
-    fun clearAll() {
-        scope.launch {
-            loading = true
-            try {
-                api.removeAllNotifications()
-                allNotifications = emptyList()
-            } catch (e: Exception) {
-                error = e.networkAwareMessage("Не удалось очистить уведомления:")
-            } finally {
-                loading = false
-            }
-        }
+    LaunchedEffect(Unit) {
+        refreshing = true
+        syncFromApi()
     }
 
-    val filteredList = remember(allNotifications, selectedFilter) {
+    val filteredList = remember(storedNotifications, selectedFilter) {
         when (selectedFilter) {
-            NotifFilter.ALL -> allNotifications
-            NotifFilter.EPISODES -> allNotifications.filterIsInstance<AnixNotification.Episode>()
-            NotifFilter.RELEASES -> allNotifications.filterIsInstance<AnixNotification.RelatedRelease>()
+            NotifFilter.ALL -> storedNotifications
+            NotifFilter.EPISODES -> storedNotifications.filter { it.type == EpisodeNotificationsWorker.TYPE_EPISODE }
+            NotifFilter.RELEASES -> storedNotifications.filter { it.type == EpisodeNotificationsWorker.TYPE_RELEASE }
         }
     }
 
@@ -218,14 +194,14 @@ fun NotificationsScreen(
             )
             IconButton(
                 onClick = {
-                    if (!loading) {
+                    if (!refreshing) {
                         scope.launch {
                             refreshing = true
-                            load()
+                            syncFromApi()
                         }
                     }
                 },
-                enabled = !loading,
+                enabled = !refreshing,
             ) {
                 Icon(
                     imageVector = Icons.Filled.Refresh,
@@ -233,11 +209,11 @@ fun NotificationsScreen(
                     tint = MainText,
                 )
             }
-            if (allNotifications.isNotEmpty()) {
-                IconButton(onClick = { clearAll() }) {
+            if (storedNotifications.isNotEmpty()) {
+                IconButton(onClick = { scope.launch { historyStore.clear() } }) {
                     Icon(
                         imageVector = Icons.Filled.Delete,
-                        contentDescription = "Удалить все",
+                        contentDescription = "Очистить",
                         tint = MainText,
                     )
                 }
@@ -275,8 +251,7 @@ fun NotificationsScreen(
 
         val content: @Composable () -> Unit = {
             when {
-                loading -> LoadingIndicator()
-                error != null -> Box(
+                error != null && storedNotifications.isEmpty() -> Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .verticalScroll(rememberScrollState()),
@@ -305,15 +280,10 @@ fun NotificationsScreen(
                         vertical = 10.dp,
                     ),
                 ) {
-                    items(filteredList, key = { "${it::class.simpleName}_${it.id}" }) { item ->
-                        AnixartNotificationCard(
+                    items(filteredList, key = { it.key }) { item ->
+                        StoredNotificationCard(
                             item = item,
-                            onClick = {
-                                when (item) {
-                                    is AnixNotification.Episode -> if (item.releaseId > 0) onOpenRelease(item.releaseId)
-                                    is AnixNotification.RelatedRelease -> if (item.releaseId > 0) onOpenRelease(item.releaseId)
-                                }
-                            },
+                            onClick = { if (item.releaseId > 0) onOpenRelease(item.releaseId) },
                         )
                     }
                 }
@@ -325,7 +295,7 @@ fun NotificationsScreen(
             onRefresh = {
                 scope.launch {
                     refreshing = true
-                    load()
+                    syncFromApi()
                 }
             },
             modifier = Modifier.fillMaxSize(),
@@ -336,15 +306,10 @@ fun NotificationsScreen(
 }
 
 @Composable
-private fun AnixartNotificationCard(
-    item: AnixNotification,
+private fun StoredNotificationCard(
+    item: StoredNotification,
     onClick: () -> Unit,
 ) {
-    val imageUrl = when (item) {
-        is AnixNotification.Episode -> item.image
-        is AnixNotification.RelatedRelease -> item.image
-    }
-
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -354,9 +319,9 @@ private fun AnixartNotificationCard(
             .padding(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (!imageUrl.isNullOrBlank()) {
+        if (!item.image.isNullOrBlank()) {
             AsyncImage(
-                model = imageUrl,
+                model = item.image,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
@@ -387,24 +352,21 @@ private fun AnixartNotificationCard(
                 .padding(start = 12.dp),
         ) {
             val text = buildAnnotatedString {
-                when (item) {
-                    is AnixNotification.Episode -> {
-                        append("Вышла серия ")
-                        if (item.episodeName.isNotBlank()) {
-                            withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
-                                append("(${item.episodeName}) ")
-                            }
-                        }
-                        append("релиза ")
+                if (item.type == EpisodeNotificationsWorker.TYPE_EPISODE) {
+                    append("Вышла серия ")
+                    if (!item.episodeName.isNullOrBlank()) {
                         withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
-                            append("«${item.title}»")
+                            append("(${item.episodeName}) ")
                         }
                     }
-                    is AnixNotification.RelatedRelease -> {
-                        append("Появился новый связанный релиз ")
-                        withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
-                            append("«${item.title}»")
-                        }
+                    append("релиза ")
+                    withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
+                        append("«${item.title}»")
+                    }
+                } else {
+                    append("Появился новый связанный релиз ")
+                    withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
+                        append("«${item.title}»")
                     }
                 }
             }
