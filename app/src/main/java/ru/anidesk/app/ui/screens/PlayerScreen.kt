@@ -811,7 +811,6 @@ fun PlayerScreen(
                 )
             }
             .pointerInput(locked, durationMs) {
-                if (locked) return@pointerInput
                 var lastTapTime = 0L
                 var lastTapX = 0f
                 var controlsBeforeTap: Boolean? = null
@@ -820,6 +819,11 @@ fun PlayerScreen(
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     val up = waitForUpOrCancellation() ?: return@awaitEachGesture
+                    if (locked) {
+                        // В блокировке касание только показывает панель, чтобы замок был доступен.
+                        controlsVisible = true
+                        return@awaitEachGesture
+                    }
                     val isDoubleTap = lastTapTime != 0L &&
                         down.uptimeMillis - lastTapTime < tapWindow &&
                         kotlin.math.abs(up.position.x - lastTapX) < tapSlop
@@ -894,139 +898,153 @@ fun PlayerScreen(
 
         // ---------- Верхняя панель ----------
         if (controlsVisible) {
-            Row(
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(Color.Black.copy(alpha = if (locked) 0.35f else 0.6f))
                     .systemBarsPadding()
                     .height(56.dp),
-                verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (!locked) {
-                    Icon(
-                        imageVector = Icons.Filled.Close,
-                        contentDescription = "Закрыть",
-                        tint = Color.White,
+                    Row(
                         modifier = Modifier
-                            .clickable {
-                                savePosition()
-                                onBack()
-                            }
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                    )
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(start = 8.dp),
+                            .fillMaxSize()
+                            // Оставляем место под кнопку замка, чтобы её не обрезали чипы.
+                            .padding(end = 48.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text(
-                            text = releaseTitle,
-                            color = Color.White,
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Medium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
+                        Icon(
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = "Закрыть",
+                            tint = Color.White,
+                            modifier = Modifier
+                                .clickable {
+                                    savePosition()
+                                    onBack()
+                                }
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
                         )
-                        currentEpisode?.let {
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(start = 8.dp),
+                        ) {
                             Text(
-                                text = it.name,
-                                color = Color(0xFFE0E0E0),
-                                fontSize = 13.sp,
+                                text = releaseTitle,
+                                color = Color.White,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Medium,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
-                        }
-                    }
-                    SelectorChip(
-                        icon = { Icon(Icons.Filled.Speed, null, tint = Color.White, modifier = Modifier.size(18.dp)) },
-                        label = formatSpeed(SPEED_OPTIONS[speedIndex]),
-                        onClick = {},
-                    ) {
-                        SPEED_OPTIONS.forEachIndexed { index, option ->
-                            DropdownMenuItem(
-                                text = { Text(formatSpeed(option)) },
-                                onClick = {
-                                    speedIndex = index
-                                    scope.launch { settingsStore.setPlaybackSpeed(index) }
-                                },
-                            )
-                        }
-                    }
-                    SelectorChip(
-                        icon = { Icon(Icons.Filled.AspectRatio, null, tint = Color.White, modifier = Modifier.size(18.dp)) },
-                        label = if (defaultQuality == 0) "Авто" else "${defaultQuality}p",
-                        onClick = {},
-                    ) {
-                        val qualityItems = buildList {
-                            add(0 to "Авто")
-                            links.keys
-                                .mapNotNull { it.toIntOrNull() }
-                                .sortedDescending()
-                                .forEach { add(it to "${it}p") }
-                        }
-                        qualityItems.forEach { (quality, label) ->
-                            DropdownMenuItem(
-                                text = { Text(label) },
-                                onClick = {
-                                    defaultQuality = quality
-                                    scope.launch { settingsStore.setDefaultQuality(quality) }
-                                    val ep = currentEpisode
-                                    if (ep != null && links.isNotEmpty()) {
-                                        val pos = player.currentPosition
-                                        val url = pickUrl(links, quality)
-                                        if (url != null) {
-                                            // Кэш предзагрузки собран под старое качество.
-                                            val oldItems = (preloadCache.values.map { it.item } +
-                                                listOfNotNull(activePreloadItem)).distinct()
-                                            preloadJob?.cancel()
-                                            preloadJob = null
-                                            preloadCache = emptyMap()
-                                            activePreloadItem = null
-                                            preloadCurrentIndex.set(-1)
-                                            preloadManager.setCurrentPlayingIndex(-1)
-                                            preloadManager.invalidate()
-                                            player.setMediaItem(buildMediaItem(url, ep))
-                                            player.prepare()
-                                            player.seekTo(pos)
-                                            player.play()
-                                            positionMs = pos
-                                            oldItems.forEach { preloadManager.remove(it) }
-                                            scheduleNextPreload(ep)
-                                        }
-                                    }
-                                },
-                            )
-                        }
-                    }
-                    if (dubbers.size > 1) {
-                        SelectorChip(
-                            icon = { Icon(Icons.Filled.RecordVoiceOver, null, tint = Color.White, modifier = Modifier.size(18.dp)) },
-                            label = dubbers.firstOrNull { it.id == currentDubberId }?.name ?: "Озвучка",
-                            onClick = {},
-                            labelMaxWidth = 140.dp,
-                        ) {
-                            dubbers.forEach { dubber ->
-                                DropdownMenuItem(
-                                    text = {
-                                        Text(
-                                            dubber.name,
-                                            color = if (dubber.id == currentDubberId) PlayerRed else Color.Unspecified,
-                                        )
-                                    },
-                                    onClick = { scope.launch { switchDubber(dubber) } },
+                            currentEpisode?.let {
+                                Text(
+                                    text = it.name,
+                                    color = Color(0xFFE0E0E0),
+                                    fontSize = 13.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
                                 )
+                            }
+                        }
+                        SelectorChip(
+                            icon = { Icon(Icons.Filled.Speed, null, tint = Color.White, modifier = Modifier.size(18.dp)) },
+                            label = formatSpeed(SPEED_OPTIONS[speedIndex]),
+                            onClick = {},
+                        ) {
+                            SPEED_OPTIONS.forEachIndexed { index, option ->
+                                DropdownMenuItem(
+                                    text = { Text(formatSpeed(option)) },
+                                    onClick = {
+                                        speedIndex = index
+                                        scope.launch { settingsStore.setPlaybackSpeed(index) }
+                                    },
+                                )
+                            }
+                        }
+                        SelectorChip(
+                            icon = { Icon(Icons.Filled.AspectRatio, null, tint = Color.White, modifier = Modifier.size(18.dp)) },
+                            label = if (defaultQuality == 0) "Авто" else "${defaultQuality}p",
+                            onClick = {},
+                        ) {
+                            val qualityItems = buildList {
+                                add(0 to "Авто")
+                                links.keys
+                                    .mapNotNull { it.toIntOrNull() }
+                                    .sortedDescending()
+                                    .forEach { add(it to "${it}p") }
+                            }
+                            qualityItems.forEach { (quality, label) ->
+                                DropdownMenuItem(
+                                    text = { Text(label) },
+                                    onClick = {
+                                        defaultQuality = quality
+                                        scope.launch { settingsStore.setDefaultQuality(quality) }
+                                        val ep = currentEpisode
+                                        if (ep != null && links.isNotEmpty()) {
+                                            val pos = player.currentPosition
+                                            val url = pickUrl(links, quality)
+                                            if (url != null) {
+                                                // Кэш предзагрузки собран под старое качество.
+                                                val oldItems = (preloadCache.values.map { it.item } +
+                                                    listOfNotNull(activePreloadItem)).distinct()
+                                                preloadJob?.cancel()
+                                                preloadJob = null
+                                                preloadCache = emptyMap()
+                                                activePreloadItem = null
+                                                preloadCurrentIndex.set(-1)
+                                                preloadManager.setCurrentPlayingIndex(-1)
+                                                preloadManager.invalidate()
+                                                player.setMediaItem(buildMediaItem(url, ep))
+                                                player.prepare()
+                                                player.seekTo(pos)
+                                                player.play()
+                                                positionMs = pos
+                                                oldItems.forEach { preloadManager.remove(it) }
+                                                scheduleNextPreload(ep)
+                                            }
+                                        }
+                                    },
+                                )
+                            }
+                        }
+                        if (dubbers.size > 1) {
+                            SelectorChip(
+                                icon = { Icon(Icons.Filled.RecordVoiceOver, null, tint = Color.White, modifier = Modifier.size(18.dp)) },
+                                label = dubbers.firstOrNull { it.id == currentDubberId }?.name ?: "Озвучка",
+                                onClick = {},
+                                labelMaxWidth = 140.dp,
+                            ) {
+                                dubbers.forEach { dubber ->
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                dubber.name,
+                                                color = if (dubber.id == currentDubberId) PlayerRed else Color.Unspecified,
+                                            )
+                                        },
+                                        onClick = { scope.launch { switchDubber(dubber) } },
+                                    )
+                                }
                             }
                         }
                     }
                 }
-                Icon(
-                    imageVector = if (locked) Icons.Filled.LockOpen else Icons.Filled.Lock,
-                    contentDescription = if (locked) "Разблокировать" else "Заблокировать",
-                    tint = Color.White,
+                // Замок всегда в правом верхнем углу и не сжимается соседними элементами.
+                Box(
                     modifier = Modifier
-                        .clickable { locked = !locked }
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                )
+                        .align(Alignment.CenterEnd)
+                        .size(48.dp)
+                        .clickable { locked = !locked },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = if (locked) Icons.Filled.Lock else Icons.Filled.LockOpen,
+                        contentDescription = if (locked) "Разблокировать" else "Заблокировать",
+                        tint = Color.White,
+                        modifier = Modifier.size(28.dp),
+                    )
+                }
             }
         }
 
