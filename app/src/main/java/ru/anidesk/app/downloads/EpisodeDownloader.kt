@@ -10,6 +10,7 @@ import android.util.Base64
 import android.util.Log
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -99,7 +100,7 @@ object EpisodeDownloader {
         val key = key(release.id, sourceId, episode.position)
         if (isDownloading(key)) return
         _states.update { it + (key to State.Downloading(0f)) }
-        val job = scope.launch {
+        val job = scope.launch(start = CoroutineStart.LAZY) {
             try {
                 val uri = downloadEpisode(
                     context = context,
@@ -131,6 +132,7 @@ object EpisodeDownloader {
             }
         }
         jobs[key] = job
+        job.start()
     }
 
     /** Останавливает активную загрузку и удаляет недокачанный файл. */
@@ -148,7 +150,14 @@ object EpisodeDownloader {
     ) {
         val uri = settingsStore.removeEpisodeDownloaded(key)
         if (uri != null) {
-            runCatching { context.contentResolver.delete(Uri.parse(uri), null, null) }
+            runCatching {
+                if (Build.VERSION.SDK_INT >= 29) {
+                    context.contentResolver.delete(Uri.parse(uri), null, null)
+                } else {
+                    // На API < 29 файл лежит в обычной папке, contentResolver его не удалит.
+                    Uri.parse(uri).path?.let { File(it).delete() }
+                }
+            }
         }
         _states.update { it + (key to State.Idle) }
     }
@@ -167,11 +176,16 @@ object EpisodeDownloader {
         val folder = sanitizeFolder(release.titleRu)
         if (Build.VERSION.SDK_INT >= 29) {
             runCatching {
+                // Экранируем спецсимволы LIKE, иначе '%' или '_' в названии удалит чужие папки.
+                val escaped = folder
+                    .replace("\\", "\\\\")
+                    .replace("%", "\\%")
+                    .replace("_", "\\_")
                 val collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
                 context.contentResolver.delete(
                     collection,
-                    "${MediaStore.Downloads.RELATIVE_PATH} LIKE ?",
-                    arrayOf("Download/Anime/$folder/%"),
+                    "${MediaStore.Downloads.RELATIVE_PATH} LIKE ? ESCAPE '\\'",
+                    arrayOf("Download/Anime/$escaped/%"),
                 )
             }
         } else {

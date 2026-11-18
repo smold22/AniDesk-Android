@@ -216,7 +216,13 @@ private fun MainNavHost(
                 api = api,
                 settingsStore = settingsStore,
                 onOpenRelease = onOpenRelease,
-                onBack = { navController.navigate("home") { launchSingleTop = true } },
+                onBack = {
+                    navController.navigate("home") {
+                        popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                        launchSingleTop = true
+                        restoreState = true
+                    }
+                },
             )
         }
         composable("bookmarks") {
@@ -224,7 +230,13 @@ private fun MainNavHost(
                 api = api,
                 settingsStore = settingsStore,
                 onOpenRelease = onOpenRelease,
-                onBack = { navController.navigate("home") { launchSingleTop = true } },
+                onBack = {
+                    navController.navigate("home") {
+                        popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                        launchSingleTop = true
+                        restoreState = true
+                    }
+                },
             )
         }
         composable("collections") {
@@ -233,7 +245,13 @@ private fun MainNavHost(
                 sessionStore = sessionStore,
                 settingsStore = settingsStore,
                 onOpenRelease = onOpenRelease,
-                onBack = { navController.navigate("home") { launchSingleTop = true } },
+                onBack = {
+                    navController.navigate("home") {
+                        popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                        launchSingleTop = true
+                        restoreState = true
+                    }
+                },
             )
         }
         composable("settings") {
@@ -253,7 +271,13 @@ private fun MainNavHost(
                 sessionStore = sessionStore,
                 settingsStore = settingsStore,
                 onOpenRelease = onOpenRelease,
-                onBack = { navController.navigate("home") { launchSingleTop = true } },
+                onBack = {
+                    navController.navigate("home") {
+                        popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                        launchSingleTop = true
+                        restoreState = true
+                    }
+                },
                 onOpenLogin = {
                     navController.navigate("login") {
                         popUpTo(navController.graph.findStartDestination().id) { saveState = true }

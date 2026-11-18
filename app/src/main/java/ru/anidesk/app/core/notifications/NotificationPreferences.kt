@@ -1,5 +1,6 @@
 package ru.anidesk.app.core.notifications
 
+import android.util.Log
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import ru.anidesk.app.core.network.AnixartApi
@@ -12,14 +13,25 @@ import ru.anidesk.app.core.settings.SettingsStore
  */
 object NotificationPreferences {
 
+    private const val TAG = "NotificationPreferences"
     private const val CONFIG_VERSION = 2
     private val DEFAULT_STATUSES = (0..5).toList()
     private val mutex = Mutex()
 
     suspend fun ensureConfigured(api: AnixartApi, settings: SettingsStore) = mutex.withLock {
-        if (settings.getServerNotificationPrefsVersion() >= CONFIG_VERSION) return@withLock
+        if (settings.getServerNotificationPrefsVersion() >= CONFIG_VERSION) {
+            Log.i(TAG, "already configured (version ${settings.getServerNotificationPrefsVersion()})")
+            return@withLock
+        }
 
         val prefs = api.notificationPreferences()
+        Log.i(
+            TAG,
+            "server prefs: episode=${prefs.isEpisodeNotificationsEnabled} " +
+                "first=${prefs.isFirstEpisodeNotificationsEnabled} " +
+                "related=${prefs.isRelatedReleaseNotificationsEnabled} " +
+                "statuses=${prefs.statusPreferences.size} types=${prefs.typePreferences.size}",
+        )
 
         if (!prefs.isEpisodeNotificationsEnabled) {
             api.editNotificationPreference("episode")

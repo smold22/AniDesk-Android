@@ -37,6 +37,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
@@ -56,7 +57,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
@@ -80,9 +84,11 @@ import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
-import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
+import androidx.media3.exoplayer.source.preload.DefaultPreloadManager
+import androidx.media3.exoplayer.source.preload.TargetPreloadStatusControl
 import androidx.media3.session.MediaSession
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
@@ -102,6 +108,7 @@ import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.ZoomOutMap
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -110,6 +117,7 @@ import ru.anidesk.app.core.network.Dubber
 import ru.anidesk.app.core.network.Episode
 import ru.anidesk.app.player.SourceParsers
 import ru.anidesk.app.ui.theme.PlayerRed
+import java.util.concurrent.atomic.AtomicInteger
 
 private val PLAYER_USER_AGENT =
     "Mozilla/5.0 (Linux; Android 13; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
@@ -118,6 +126,22 @@ private val SPEED_OPTIONS = listOf(0.25f, 0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2
 
 /** Шаг перемотки двойным тапом, независимый от настройки «Пропуск». */
 private const val DOUBLE_TAP_SEEK_SEC = 15
+
+/** Буфер плеера: держим запас, чтобы сеть не успевала закончиться во время просмотра. */
+private const val MIN_BUFFER_MS = 20_000
+private const val MAX_BUFFER_MS = 60_000
+private const val BUFFER_FOR_PLAYBACK_MS = 2_500
+private const val BUFFER_FOR_REBUFFER_MS = 5_000
+private const val BACK_BUFFER_MS = 30_000
+
+/** Сколько секунд следующей серии грузим заранее. */
+private const val PRELOAD_NEXT_MS = 20_000L
+
+private data class PreloadedEpisode(
+    val item: MediaItem,
+    val candidates: List<String>,
+    val links: Map<String, String>,
+)
 
 @OptIn(UnstableApi::class)
 @Composable
@@ -144,6 +168,7 @@ fun PlayerScreen(
     var isPlaying by remember { mutableStateOf(false) }
     var buffering by remember { mutableStateOf(false) }
     var positionMs by remember { mutableLongStateOf(0L) }
+    var bufferedPositionMs by remember { mutableLongStateOf(0L) }
     var durationMs by remember { mutableLongStateOf(0L) }
     var controlsVisible by remember { mutableStateOf(true) }
     var locked by remember { mutableStateOf(false) }
@@ -151,11 +176,14 @@ fun PlayerScreen(
     var resizeMode by remember { mutableIntStateOf(0) }
     var seekTarget by remember { mutableLongStateOf(-1L) }
     var tapFeedbackId by remember { mutableIntStateOf(0) }
+    var seekStartPos by remember { mutableLongStateOf(0L) }
+    var dragAccum by remember { mutableStateOf(0f) }
     var tapFeedback by remember { mutableStateOf("") }
     var autoPlayNext by remember { mutableStateOf(false) }
     var defaultQuality by remember { mutableIntStateOf(0) }
     var rewindTimeSec by remember { mutableIntStateOf(10) }
     var resumePosition by remember { mutableStateOf<Long?>(null) }
+    var resumeEpisodePosition by remember { mutableIntStateOf(-1) }
     var linkCandidates by remember { mutableStateOf<List<String>>(emptyList()) }
     var candidateIndex by remember { mutableIntStateOf(0) }
     var dubbers by remember { mutableStateOf<List<Dubber>>(emptyList()) }
@@ -169,15 +197,52 @@ fun PlayerScreen(
             .setAllowCrossProtocolRedirects(true)
     }
 
-    val player = remember {
-        ExoPlayer.Builder(context)
+    // Индекс текущей серии читается менеджером предзагрузки из фонового потока.
+    val preloadCurrentIndex = remember { AtomicInteger(-1) }
+
+    val preloadBuilder = remember {
+        DefaultPreloadManager.Builder(
+            context,
+            object : TargetPreloadStatusControl<Int, DefaultPreloadManager.PreloadStatus> {
+                override fun getTargetPreloadStatus(rankingData: Int): DefaultPreloadManager.PreloadStatus {
+                    // Грузим заранее только следующую серию.
+                    return if (rankingData == preloadCurrentIndex.get() + 1) {
+                        DefaultPreloadManager.PreloadStatus.specifiedRangeLoaded(PRELOAD_NEXT_MS)
+                    } else {
+                        DefaultPreloadManager.PreloadStatus.PRELOAD_STATUS_NOT_PRELOADED
+                    }
+                }
+            },
+        )
             .setMediaSourceFactory(
                 DefaultMediaSourceFactory(context).setDataSourceFactory(dataSourceFactory)
             )
-            .setTrackSelector(DefaultTrackSelector(context))
-            .build()
+            .setLoadControl(
+                DefaultLoadControl.Builder()
+                    .setBufferDurationsMs(
+                        MIN_BUFFER_MS,
+                        MAX_BUFFER_MS,
+                        BUFFER_FOR_PLAYBACK_MS,
+                        BUFFER_FOR_REBUFFER_MS,
+                    )
+                    .setBackBuffer(BACK_BUFFER_MS, true)
+                    .setPrioritizeTimeOverSizeThresholds(true)
+                    .build()
+            )
+    }
+
+    val preloadManager = remember { preloadBuilder.build() }
+
+    // Плеер строим тем же билдером: так он использует уже загруженные данные.
+    val player = remember {
+        preloadBuilder
+            .buildExoPlayer(ExoPlayer.Builder(context))
             .apply { repeatMode = ExoPlayer.REPEAT_MODE_OFF }
     }
+
+    var preloadCache by remember { mutableStateOf<Map<Int, PreloadedEpisode>>(emptyMap()) }
+    var activePreloadItem by remember { mutableStateOf<MediaItem?>(null) }
+    var preloadJob by remember { mutableStateOf<Job?>(null) }
 
     val mediaSession = remember { mutableStateOf<MediaSession?>(null) }
 
@@ -365,37 +430,93 @@ fun PlayerScreen(
         }.distinct()
     }
 
+    fun configureDataSourceHeaders() {
+        if (currentSourceName.contains("Sibnet", ignoreCase = true)) {
+            dataSourceFactory.setDefaultRequestProperties(
+                mapOf(
+                    "Referer" to "https://video.sibnet.ru/",
+                    "Origin" to "https://video.sibnet.ru",
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                )
+            )
+        } else {
+            dataSourceFactory.setDefaultRequestProperties(emptyMap())
+        }
+    }
+
+    fun scheduleNextPreload(current: Episode) {
+        preloadJob?.cancel()
+        val currentIndex = episodes.indexOfFirst { it.position == current.position }
+        if (currentIndex < 0) return
+        preloadCurrentIndex.set(currentIndex)
+        preloadManager.setCurrentPlayingIndex(currentIndex)
+        val next = episodes.getOrNull(currentIndex + 1)
+        if (next == null || preloadCache.containsKey(next.position)) {
+            preloadManager.invalidate()
+            return
+        }
+        preloadJob = scope.launch {
+            configureDataSourceHeaders()
+            val parsed = runCatching { SourceParsers.parse(next.url, currentSourceName) }
+                .onFailure { android.util.Log.w("Player", "preload parse failed: ${it.message}") }
+                .getOrNull()
+                ?: return@launch
+            val candidates = orderedCandidates(parsed, defaultQuality)
+            val url = candidates.firstOrNull() ?: return@launch
+            val item = buildMediaItem(url, next)
+            preloadCache = preloadCache + (next.position to PreloadedEpisode(item, candidates, parsed))
+            preloadManager.add(item, currentIndex + 1)
+            preloadManager.invalidate()
+            val keep = setOf(current.position, next.position)
+            preloadCache.keys.filterNot(keep::contains).forEach { pos ->
+                val old = preloadCache[pos]
+                preloadCache = preloadCache - pos
+                if (old?.item != activePreloadItem) old?.item?.let { preloadManager.remove(it) }
+            }
+            android.util.Log.i("Player", "preloaded next episode pos=${next.position}")
+        }
+    }
+
     suspend fun playEpisode(ep: Episode, resumeMs: Long = 0L) {
         loading = true
         error = null
+        android.util.Log.i("Player", "playEpisode pos=${ep.position} cached=${preloadCache.containsKey(ep.position)}")
         try {
-            val parsed = SourceParsers.parse(ep.url, currentSourceName)
-            if (parsed.isEmpty()) {
-                error = "Не удалось получить ссылку на видео"
-                return
-            }
-            links = parsed
-            linkCandidates = orderedCandidates(parsed, defaultQuality)
-            candidateIndex = 0
-            val url = linkCandidates.firstOrNull()
-            if (url == null) {
-                error = "Нет доступного качества"
-                return
-            }
-
-            if (currentSourceName.contains("Sibnet", ignoreCase = true)) {
-                dataSourceFactory.setDefaultRequestProperties(
-                    mapOf(
-                        "Referer" to "https://video.sibnet.ru/",
-                        "Origin" to "https://video.sibnet.ru",
-                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                    )
-                )
+            configureDataSourceHeaders()
+            val cached = preloadCache[ep.position]
+            if (cached != null) {
+                links = cached.links
+                linkCandidates = cached.candidates
+                candidateIndex = 0
+                if (cached.item != activePreloadItem) {
+                    activePreloadItem = cached.item
+                    val preloadedSource = preloadManager.getMediaSource(cached.item)
+                    if (preloadedSource != null) {
+                        player.setMediaSource(preloadedSource)
+                    } else {
+                        player.setMediaItem(cached.item)
+                    }
+                } else {
+                    // Повторный запуск той же серии: источник уже у плеера.
+                    player.setMediaItem(cached.item)
+                }
             } else {
-                dataSourceFactory.setDefaultRequestProperties(emptyMap())
+                activePreloadItem = null
+                val parsed = SourceParsers.parse(ep.url, currentSourceName)
+                if (parsed.isEmpty()) {
+                    error = "Не удалось получить ссылку на видео"
+                    return
+                }
+                links = parsed
+                linkCandidates = orderedCandidates(parsed, defaultQuality)
+                candidateIndex = 0
+                val url = linkCandidates.firstOrNull()
+                if (url == null) {
+                    error = "Нет доступного качества"
+                    return
+                }
+                player.setMediaItem(buildMediaItem(url, ep))
             }
-
-            player.setMediaItem(buildMediaItem(url, ep))
             player.prepare()
             if (resumeMs > 0L) {
                 player.seekTo(resumeMs)
@@ -403,6 +524,7 @@ fun PlayerScreen(
             }
             player.play()
             currentEpisode = ep
+            scheduleNextPreload(ep)
 
             if (api.token != null) {
                 runCatching { api.markEpisodeAsWatched(releaseId, currentSourceId, ep.position) }
@@ -411,6 +533,7 @@ fun PlayerScreen(
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
+            android.util.Log.e("Player", "playEpisode failed pos=${ep.position}", e)
             error = e.networkAwareMessage("Ошибка воспроизведения:")
         } finally {
             loading = false
@@ -422,6 +545,15 @@ fun PlayerScreen(
         val pos = currentEpisode?.position ?: startPosition
         val posMs = player.currentPosition
         savePosition()
+        // Ссылки другого источника нельзя смешивать с уже загруженными.
+        val oldPreloadItems = (preloadCache.values.map { it.item } + listOfNotNull(activePreloadItem)).distinct()
+        preloadJob?.cancel()
+        preloadJob = null
+        preloadCache = emptyMap()
+        activePreloadItem = null
+        preloadCurrentIndex.set(-1)
+        preloadManager.setCurrentPlayingIndex(-1)
+        preloadManager.invalidate()
         loading = true
         error = null
         try {
@@ -442,6 +574,7 @@ fun PlayerScreen(
                 return
             }
             playEpisode(target, resumeMs = if (posMs > 5000L) posMs else 0L)
+            oldPreloadItems.forEach { preloadManager.remove(it) }
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -451,7 +584,7 @@ fun PlayerScreen(
         }
     }
 
-    DisposableEffect(player) {
+    DisposableEffect(player, preloadManager) {
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(playing: Boolean) {
                 if (playing &&
@@ -469,6 +602,7 @@ fun PlayerScreen(
                         val d = player.duration
                         durationMs = if (d > 0) d else 0L
                         positionMs = player.currentPosition
+                        bufferedPositionMs = player.bufferedPosition
                         controlsVisible = true
                         savePosition()
                     }
@@ -482,6 +616,10 @@ fun PlayerScreen(
                         if (ep != null) clearPosition(ep)
                         val index = episodes.indexOfFirst { it.position == currentEpisode?.position }
                         val next = if (autoPlayNext) episodes.getOrNull(index + 1) else null
+                        android.util.Log.i(
+                            "Player",
+                            "ended index=$index next=${next?.position} autoPlayNext=$autoPlayNext",
+                        )
                         if (next != null) {
                             scope.launch { playEpisode(next) }
                         } else {
@@ -495,9 +633,15 @@ fun PlayerScreen(
                 val d = player.duration
                 durationMs = if (d > 0) d else 0L
                 positionMs = 0L
+                bufferedPositionMs = 0L
             }
 
             override fun onPlayerError(errorException: androidx.media3.common.PlaybackException) {
+                android.util.Log.w(
+                    "Player",
+                    "player error ${errorException.errorCodeName}: ${errorException.message}",
+                    errorException,
+                )
                 val next = candidateIndex + 1
                 if (next < linkCandidates.size) {
                     candidateIndex = next
@@ -516,9 +660,12 @@ fun PlayerScreen(
         player.addListener(listener)
         onDispose {
             player.removeListener(listener)
+            preloadJob?.cancel()
+            preloadJob = null
             mediaSession.value?.release()
             mediaSession.value = null
             player.release()
+            preloadManager.release()
         }
     }
 
@@ -526,6 +673,7 @@ fun PlayerScreen(
         var ticks = 0
         while (isPlaying) {
             positionMs = player.currentPosition
+            bufferedPositionMs = player.bufferedPosition
             delay(500)
             if (++ticks % 10 == 0) savePosition()
         }
@@ -557,9 +705,15 @@ fun PlayerScreen(
             releaseTitle = api.releaseInfo(releaseId).release?.titleRu ?: ""
             val start = episodes.firstOrNull { it.position == startPosition } ?: episodes.firstOrNull()
             if (start != null) {
-                playEpisode(start)
+                // Сначала спрашиваем про продолжение, иначе видео успевает начать играть с нуля.
                 val saved = settingsStore.getPlaybackPosition(positionKey(start.position))
-                if (saved > 0) resumePosition = saved
+                if (saved > 0L) {
+                    resumeEpisodePosition = start.position
+                    resumePosition = saved
+                    loading = false
+                } else {
+                    playEpisode(start)
+                }
             } else {
                 error = "Серии не найдены"
                 loading = false
@@ -821,11 +975,23 @@ fun PlayerScreen(
                                         val pos = player.currentPosition
                                         val url = pickUrl(links, quality)
                                         if (url != null) {
+                                            // Кэш предзагрузки собран под старое качество.
+                                            val oldItems = (preloadCache.values.map { it.item } +
+                                                listOfNotNull(activePreloadItem)).distinct()
+                                            preloadJob?.cancel()
+                                            preloadJob = null
+                                            preloadCache = emptyMap()
+                                            activePreloadItem = null
+                                            preloadCurrentIndex.set(-1)
+                                            preloadManager.setCurrentPlayingIndex(-1)
+                                            preloadManager.invalidate()
                                             player.setMediaItem(buildMediaItem(url, ep))
                                             player.prepare()
                                             player.seekTo(pos)
                                             player.play()
                                             positionMs = pos
+                                            oldItems.forEach { preloadManager.remove(it) }
+                                            scheduleNextPreload(ep)
                                         }
                                     }
                                 },
@@ -933,17 +1099,13 @@ fun PlayerScreen(
                         modifier = Modifier.padding(start = 16.dp, end = 8.dp),
                     )
                     val sliderRange = if (durationMs > 0) 0f..durationMs.toFloat() else 0f..1f
-                    Slider(
+                    BufferedPlayerSlider(
                         value = positionMs.toFloat().coerceIn(sliderRange.start, sliderRange.endInclusive),
+                        bufferedValue = bufferedPositionMs.toFloat().coerceIn(sliderRange.start, sliderRange.endInclusive),
+                        valueRange = sliderRange,
                         onValueChange = { positionMs = it.toLong() },
                         onValueChangeFinished = { player.seekTo(positionMs) },
-                        valueRange = sliderRange,
                         enabled = durationMs > 0,
-                        colors = SliderDefaults.colors(
-                            thumbColor = PlayerRed,
-                            activeTrackColor = PlayerRed,
-                            inactiveTrackColor = Color.White.copy(alpha = 0.25f),
-                        ),
                         modifier = Modifier
                             .weight(1f)
                             .height(36.dp),
@@ -1013,30 +1175,35 @@ fun PlayerScreen(
     }
 
     // ---------- Диалог продолжения воспроизведения (как в AnixartM) ----------
+    fun startEpisodeFromBeginning(clearSaved: Boolean) {
+        val epPos = if (resumeEpisodePosition >= 0) resumeEpisodePosition else startPosition
+        val ep = episodes.firstOrNull { it.position == epPos } ?: episodes.firstOrNull()
+        resumePosition = null
+        resumeEpisodePosition = -1
+        if (clearSaved) {
+            scope.launch { settingsStore.clearPlaybackPosition(positionKey(epPos)) }
+        }
+        if (ep != null) scope.launch { playEpisode(ep) }
+    }
+
     resumePosition?.let { saved ->
         AlertDialog(
-            onDismissRequest = {
-                scope.launch { settingsStore.clearPlaybackPosition(positionKey(startPosition)) }
-                resumePosition = null
-            },
+            onDismissRequest = { startEpisodeFromBeginning(clearSaved = true) },
             title = { Text("Воспроизведение") },
             text = { Text("Продолжить с ${formatTime(saved)}?") },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        player.seekTo(saved)
-                        positionMs = saved
+                        val epPos = if (resumeEpisodePosition >= 0) resumeEpisodePosition else startPosition
+                        val ep = episodes.firstOrNull { it.position == epPos } ?: episodes.firstOrNull()
                         resumePosition = null
+                        resumeEpisodePosition = -1
+                        if (ep != null) scope.launch { playEpisode(ep, resumeMs = saved) }
                     },
                 ) { Text("Продолжить") }
             },
             dismissButton = {
-                TextButton(
-                    onClick = {
-                        scope.launch { settingsStore.clearPlaybackPosition(positionKey(startPosition)) }
-                        resumePosition = null
-                    },
-                ) { Text("Начать сначала") }
+                TextButton(onClick = { startEpisodeFromBeginning(clearSaved = true) }) { Text("Начать сначала") }
             },
         )
     }
@@ -1067,9 +1234,7 @@ fun PlayerScreen(
     }
 }
 
-// Позиция начала жеста перемотки и накопленное смещение (состояние жеста)
-private var seekStartPos: Long = 0L
-private var dragAccum: Float = 0f
+// Позиция начала жеста перемотки и накопленное смещение хранятся в состоянии экрана.
 
 @Composable
 private fun SelectorChip(
@@ -1161,4 +1326,84 @@ private fun formatSeekStep(sec: Int): String = when {
     sec < 60 -> "$sec с"
     sec % 60 == 0 -> "${sec / 60} мин"
     else -> "${sec / 60} мин ${sec % 60} с"
+}
+
+/**
+ * Слайдер перемотки с полосой предзагрузки: поверх стандартной дорожки рисуется
+ * уже загруженный буфер, чтобы было видно, где видео можно смотреть без ожидания.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun BufferedPlayerSlider(
+    value: Float,
+    bufferedValue: Float,
+    valueRange: ClosedFloatingPointRange<Float>,
+    onValueChange: (Float) -> Unit,
+    onValueChangeFinished: () -> Unit,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val span = (valueRange.endInclusive - valueRange.start).takeIf { it > 0f } ?: 1f
+    val activeProgress = ((value - valueRange.start) / span).coerceIn(0f, 1f)
+    val bufferedProgress = ((bufferedValue - valueRange.start) / span).coerceIn(activeProgress, 1f)
+    val colors = SliderDefaults.colors(
+        thumbColor = PlayerRed,
+        activeTrackColor = PlayerRed,
+        inactiveTrackColor = Color.White.copy(alpha = 0.25f),
+        disabledThumbColor = Color.White.copy(alpha = 0.42f),
+        disabledActiveTrackColor = PlayerRed.copy(alpha = 0.4f),
+        disabledInactiveTrackColor = Color.White.copy(alpha = 0.16f),
+        activeTickColor = Color.Transparent,
+        inactiveTickColor = Color.Transparent,
+    )
+    Slider(
+        value = value,
+        onValueChange = onValueChange,
+        modifier = modifier,
+        enabled = enabled,
+        valueRange = valueRange,
+        onValueChangeFinished = onValueChangeFinished,
+        colors = colors,
+        track = { sliderState ->
+            SliderDefaults.Track(
+                sliderState = sliderState,
+                enabled = enabled,
+                colors = colors,
+                modifier = Modifier.bufferedTrackOverlay(
+                    activeProgress = activeProgress,
+                    bufferedProgress = bufferedProgress,
+                    color = Color.White.copy(alpha = 0.45f),
+                ),
+            )
+        },
+    )
+}
+
+/**
+ * Дорисовывает за проигранной частью слайдера отрезок буфера.
+ * Доли буфера и прогресса передаются в диапазоне `0f..1f`.
+ */
+private fun Modifier.bufferedTrackOverlay(
+    activeProgress: Float,
+    bufferedProgress: Float,
+    color: Color,
+): Modifier = drawWithContent {
+    drawContent()
+
+    if (bufferedProgress <= activeProgress) return@drawWithContent
+
+    val trackY = size.height / 2f
+    val strokeWidth = 4.dp.toPx()
+    val gapPx = 6.dp.toPx()
+    val startX = (size.width * activeProgress + gapPx).coerceIn(0f, size.width)
+    val endX = (size.width * bufferedProgress).coerceIn(0f, size.width)
+    if (startX >= endX) return@drawWithContent
+
+    drawLine(
+        color = color,
+        start = Offset(startX, trackY),
+        end = Offset(endX, trackY),
+        strokeWidth = strokeWidth,
+        cap = StrokeCap.Round,
+    )
 }

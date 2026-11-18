@@ -57,7 +57,9 @@ class SettingsStore(private val context: Context) {
     val rewindTime: Flow<Int> = context.settingsDataStore.data.map { it[REWIND_TIME] ?: 85 }
 
     /** Выбранный хост API Anixart */
-    val apiEndpoint: Flow<String> = context.settingsDataStore.data.map { it[API_ENDPOINT] ?: DEFAULT_API_ENDPOINT }
+    val apiEndpoint: Flow<String> = context.settingsDataStore.data.map {
+        normalizeApiHost(it[API_ENDPOINT] ?: DEFAULT_API_ENDPOINT)
+    }
 
     suspend fun setTheme(value: Int) {
         context.settingsDataStore.edit { it[THEME] = value }
@@ -88,7 +90,7 @@ class SettingsStore(private val context: Context) {
     }
 
     suspend fun setApiEndpoint(value: String) {
-        context.settingsDataStore.edit { it[API_ENDPOINT] = value }
+        context.settingsDataStore.edit { it[API_ENDPOINT] = normalizeApiHost(value) }
     }
 
     /** Уведомления о новых сериях */
@@ -246,16 +248,34 @@ class SettingsStore(private val context: Context) {
     }
 
     companion object {
-        const val DEFAULT_API_ENDPOINT = "api-s.anixsekai.com"
+        const val DEFAULT_API_ENDPOINT = "api.anixsekai.com"
 
         /** Доступные эндпоинты API (host -> подпись) */
         val API_ENDPOINTS = listOf(
-            "api-s.anixsekai.com" to "api-s.anixsekai.com (основной)",
-            "api.anixart.app" to "api.anixart.app",
-            "api.anixart.tv" to "api.anixart.tv (заблокирован в РФ)",
-            "api.anixsekai.com" to "api.anixsekai.com",
-            "baproxy-demo.ds1nc.ru" to "baproxy-demo.ds1nc.ru (прокси)",
+            "api.anixsekai.com" to "api.anixsekai.com (основной)",
+            "api.anixart.app" to "api.anixart.app (резерв)",
+            "api-s.anixsekai.com" to "api-s.anixsekai.com (резерв)",
+            "baproxy-demo.ds1nc.ru" to "baproxy-demo.ds1nc.ru (Резервный)",
         )
+
+        private val SUPPORTED_API_HOSTS = API_ENDPOINTS.map { it.first }.toSet()
+
+        /** Достаёт host из значения вида `https://host/path` или просто `host`. */
+        fun apiHost(value: String): String = value.trim()
+            .substringAfter("://", value)
+            .substringBefore('/')
+            .substringBefore(':')
+            .lowercase()
+
+        /**
+         * Хосты, которых больше нет в списке (например, заблокированный
+         * api.anixart.tv), заменяем основным, чтобы приложение не ходило
+         * в заведомо нерабочий API.
+         */
+        fun normalizeApiHost(value: String): String {
+            val host = apiHost(value)
+            return if (host in SUPPORTED_API_HOSTS) host else DEFAULT_API_ENDPOINT
+        }
 
         fun apiBaseUrl(host: String): String = "https://$host"
     }

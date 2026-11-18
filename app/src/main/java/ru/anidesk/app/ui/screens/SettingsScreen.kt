@@ -1,7 +1,12 @@
 package ru.anidesk.app.ui.screens
 
+import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
+import android.os.PowerManager
+import android.provider.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -12,6 +17,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
@@ -29,6 +35,7 @@ import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.BatteryAlert
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Paid
 import androidx.compose.material.icons.filled.Palette
@@ -56,7 +63,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -69,6 +75,7 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import ru.anidesk.app.AniDeskApplication
 import ru.anidesk.app.core.network.AnixartApi
 import ru.anidesk.app.core.notifications.NotificationPreferences
 import ru.anidesk.app.core.notifications.Notifications
@@ -77,7 +84,6 @@ import ru.anidesk.app.core.update.UpdateManager
 import ru.anidesk.app.core.update.UpdateStatus
 import ru.anidesk.app.ui.components.HeaderIconButton
 import ru.anidesk.app.ui.theme.Carmine
-import ru.anidesk.app.ui.theme.OnCarmine
 import ru.anidesk.app.ui.theme.MainText
 import ru.anidesk.app.ui.theme.SecondaryText
 import ru.anidesk.app.ui.theme.ThirdText
@@ -116,7 +122,9 @@ fun SettingsScreen(
 ) {
     var screen by remember { mutableIntStateOf(0) }
     val appContext = LocalContext.current.applicationContext
-    val updateManager = remember { UpdateManager(appContext) }
+    // Менеджер обновлений живёт на уровне Application, чтобы прогресс не терялся
+    // при переходе между экранами настроек.
+    val updateManager = (appContext as AniDeskApplication).updateManager
 
     when (screen) {
         0 -> SettingsMain(api, settingsStore, onBack = onBack, onOpen = { screen = it }, onOpenDonate = onOpenDonate)
@@ -208,6 +216,11 @@ private fun SettingsMain(
                         colors = SwitchDefaults.colors(checkedTrackColor = Carmine),
                     )
                 },
+            )
+            SettingsRow(
+                icon = Icons.Filled.BatteryAlert,
+                title = "Оптимизация батареи",
+                onClick = { openAppDetailsSettings(appContext) },
             )
             SettingsDivider()
             SettingsRow(
@@ -538,13 +551,11 @@ private fun DataSettings(api: AnixartApi, settingsStore: SettingsStore, onBack: 
             text = {
                 Column {
                     SettingsStore.API_ENDPOINTS.forEach { (host, label) ->
-                        var focused by remember { mutableStateOf(false) }
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(8.dp))
-                                .background(if (focused) Carmine else Color.Transparent)
-                                .onFocusChanged { focused = it.isFocused }
+                                .background(if (apiEndpoint == host) Carmine.copy(alpha = 0.25f) else Color.Transparent)
                                 .clickable {
                                     apiEndpoint = host
                                     scope.launch {
@@ -560,7 +571,7 @@ private fun DataSettings(api: AnixartApi, settingsStore: SettingsStore, onBack: 
                             Text(
                                 text = label,
                                 fontSize = 15.sp,
-                                color = if (focused) OnCarmine else MainText,
+                                color = MainText,
                                 textAlign = TextAlign.Center,
                             )
                             if (apiEndpoint == host) {
@@ -568,12 +579,18 @@ private fun DataSettings(api: AnixartApi, settingsStore: SettingsStore, onBack: 
                                 Icon(
                                     Icons.Filled.Check,
                                     contentDescription = null,
-                                    tint = if (focused) OnCarmine else Carmine,
+                                    tint = Carmine,
                                     modifier = Modifier.size(16.dp),
                                 )
                             }
                         }
                     }
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        text = "Если хост не отвечает, приложение автоматически переключится на резервный.",
+                        fontSize = 12.sp,
+                        color = ThirdText,
+                    )
                 }
             },
             confirmButton = {
@@ -802,6 +819,14 @@ private fun UpdateDialogs(manager: UpdateManager) {
         }
         else -> Unit
     }
+}
+
+private fun openAppDetailsSettings(context: Context) {
+    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+        data = Uri.parse("package:${context.packageName}")
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    runCatching { context.startActivity(intent) }
 }
 
 // ---------- Общие элементы ----------

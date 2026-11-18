@@ -1,6 +1,7 @@
 package ru.anidesk.app.ui.navigation
 
 import android.Manifest
+import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -47,7 +48,7 @@ object Routes {
         sourceId: Int,
         position: Int,
         sourceName: String,
-    ) = "player/$releaseId/$dubberId/$sourceId/$position/$sourceName"
+    ) = "player/$releaseId/$dubberId/$sourceId/$position/${Uri.encode(sourceName)}"
 }
 
 @Composable
@@ -56,6 +57,7 @@ fun AniDeskApp(
     sessionStore: SessionStore,
     settingsStore: SettingsStore,
     notificationReleaseId: Int = 0,
+    notificationEvent: Int = 0,
 ) {
     val navController = rememberNavController()
     val context = LocalContext.current
@@ -76,15 +78,19 @@ fun AniDeskApp(
         }
     }
 
-    LaunchedEffect(notificationReleaseId, token, tokenLoaded, authSkippedLoaded) {
-        if (!tokenLoaded || !authSkippedLoaded || token == null || notificationReleaseId <= 0) {
+    // Уведомление открывает релиз независимо от авторизации: карточка релиза
+    // доступна и без входа. notificationEvent позволяет повторно открыть тот же релиз.
+    LaunchedEffect(notificationEvent, notificationReleaseId, tokenLoaded, authSkippedLoaded) {
+        if (!tokenLoaded || !authSkippedLoaded || notificationReleaseId <= 0) {
             return@LaunchedEffect
         }
-        val currentRoute = navController.currentDestination?.route ?: return@LaunchedEffect
-        if (currentRoute != Routes.RELEASE) {
-            navController.navigate(Routes.release(notificationReleaseId)) {
-                launchSingleTop = true
-            }
+        val currentRoute = navController.currentDestination?.route
+            ?: return@LaunchedEffect
+        val alreadyOpen = currentRoute == Routes.RELEASE &&
+            navController.currentBackStackEntry?.arguments?.getInt("releaseId") == notificationReleaseId
+        if (alreadyOpen) return@LaunchedEffect
+        navController.navigate(Routes.release(notificationReleaseId)) {
+            launchSingleTop = true
         }
     }
 
@@ -110,7 +116,9 @@ fun AniDeskApp(
                 popUpTo(Routes.LOGIN) { inclusive = true }
             }
         }
-        if (token == null && navController.currentDestination?.route != Routes.LOGIN) {
+        // Принудительный переход на вход нужен только при выходе из аккаунта,
+        // а не на экране релиза, открытом из уведомления без авторизации.
+        if (token == null && navController.currentDestination?.route == Routes.MAIN) {
             navController.navigate(Routes.LOGIN) {
                 popUpTo(0) { inclusive = true }
             }

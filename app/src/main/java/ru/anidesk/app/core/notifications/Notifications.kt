@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -23,6 +24,8 @@ import ru.anidesk.app.R
 import java.util.concurrent.TimeUnit
 
 object Notifications {
+
+    private const val TAG = "Notifications"
 
     const val CHANNEL_NEW_EPISODES = "anidesk_notifications"
     const val EXTRA_RELEASE_ID = MainActivity.EXTRA_RELEASE_ID
@@ -75,7 +78,7 @@ object Notifications {
             .build()
         WorkManager.getInstance(context).enqueueUniqueWork(
             WORK_NEW_EPISODES_IMMEDIATE,
-            ExistingWorkPolicy.REPLACE,
+            ExistingWorkPolicy.KEEP,
             request,
         )
     }
@@ -98,7 +101,18 @@ object Notifications {
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
             PackageManager.PERMISSION_GRANTED
         ) {
+            Log.w(TAG, "show skipped: POST_NOTIFICATIONS permission is not granted")
             return false
+        }
+        // Выключенный пользователем канал не бросает исключение при notify(),
+        // поэтому проверяем его явно — иначе пуш считается «показанным».
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = context.getSystemService(NotificationManager::class.java)
+                ?.getNotificationChannel(CHANNEL_NEW_EPISODES)
+            if (channel == null || channel.importance == NotificationManager.IMPORTANCE_NONE) {
+                Log.w(TAG, "show skipped: notification channel is disabled")
+                return false
+            }
         }
         val intent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -123,6 +137,9 @@ object Notifications {
         return runCatching {
             NotificationManagerCompat.from(context).notify(id, notification)
             true
-        }.getOrDefault(false)
+        }.getOrElse { e ->
+            Log.w(TAG, "show failed: id=$id", e)
+            false
+        }
     }
 }

@@ -1,5 +1,7 @@
 package ru.anidesk.app.ui.screens
 
+import kotlinx.coroutines.delay
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -88,15 +90,31 @@ fun HistoryScreen(
                     if (!endReached && !loadingMore && releases.isNotEmpty()) {
                         loadingMore = true
                         val next = page + 1
-                        runCatching { api.history(next).content }
-                            .onSuccess { more ->
-                                if (more.isEmpty()) {
-                                    endReached = true
-                                } else {
-                                    releases = (releases + more).distinctBy { it.id }
-                                    page = next
+                        var more: List<Release>? = null
+                        repeat(3) { attempt ->
+                            if (more != null) return@repeat
+                            runCatching { api.history(next).content }
+                                .onSuccess { more = it }
+                                .onFailure { e ->
+                                    android.util.Log.w(
+                                        "Pagination",
+                                        "History page=$next attempt=${attempt + 1} failed: ${e.message}",
+                                    )
+                                    if (attempt < 2) delay(1200)
                                 }
+                        }
+                        android.util.Log.i(
+                            "Pagination",
+                            "History page=$next got=${more?.size ?: -1} loaded=${releases.size}",
+                        )
+                        when {
+                            more == null -> Unit
+                            more!!.isEmpty() -> endReached = true
+                            else -> {
+                                releases = (releases + more!!).distinctBy { it.id }
+                                page = next
                             }
+                        }
                         loadingMore = false
                     }
                 },

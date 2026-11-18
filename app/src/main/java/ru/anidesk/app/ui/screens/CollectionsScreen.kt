@@ -102,6 +102,7 @@ fun CollectionsScreen(
     var endReached by remember { mutableStateOf(false) }
     var page by remember { mutableIntStateOf(0) }
     var error by remember { mutableStateOf<String?>(null) }
+    var loadMoreError by remember { mutableStateOf<String?>(null) }
 
     // Детальный вид подборки
     var releases by remember { mutableStateOf<List<Release>>(emptyList()) }
@@ -110,6 +111,7 @@ fun CollectionsScreen(
     var detailPage by remember { mutableIntStateOf(0) }
     var detailError by remember { mutableStateOf<String?>(null) }
     var detail by remember { mutableStateOf<UserCollection?>(null) }
+    var skipNextDetailLoad by remember { mutableStateOf(false) }
     var myId by remember { mutableStateOf<Int?>(null) }
     var tabIndex by rememberSaveable { mutableIntStateOf(0) }
 
@@ -129,14 +131,13 @@ fun CollectionsScreen(
 
     val scope = rememberCoroutineScope()
 
-    suspend fun fetchCollections(p: Int): List<UserCollection> {
-        return runCatching { api.collections(p).content }.getOrElse { emptyList() }
-    }
+    suspend fun fetchCollections(p: Int): List<UserCollection> = api.collections(p).content
 
     LaunchedEffect(Unit) {
         myId = sessionStore.profileId.first()
         loading = true
         error = null
+        loadMoreError = null
         try {
             collections = fetchCollections(0)
             endReached = collections.isEmpty()
@@ -152,12 +153,24 @@ fun CollectionsScreen(
     suspend fun loadMoreCollections() {
         if (endReached || loadingMore || collections.isEmpty()) return
         loadingMore = true
-        val more = fetchCollections(page + 1)
-        if (more.isEmpty()) {
-            endReached = true
-        } else {
-            collections = (collections + more).distinctBy { it.id }
-            page += 1
+        loadMoreError = null
+        val result = runCatching { fetchCollections(page + 1) }
+        result.onSuccess { more ->
+            android.util.Log.i(
+                "Pagination",
+                "Collections all page=${page + 1} got=${more.size} loaded=${collections.size}",
+            )
+            if (more.isEmpty()) {
+                endReached = true
+            } else {
+                collections = (collections + more).distinctBy { it.id }
+                page += 1
+            }
+        }.onFailure { e ->
+            // Сетевая ошибка — это не конец списка: страницу можно повторить.
+            if (e !is CancellationException) {
+                loadMoreError = e.networkAwareMessage("Не удалось загрузить подборки:")
+            }
         }
         loadingMore = false
     }
@@ -178,7 +191,8 @@ fun CollectionsScreen(
             val res = api.profileCollections(id, 0)
             myCollections = res.content
             myPage = 0
-            myEndReached = res.content.isEmpty() || res.content.size >= res.totalCount
+            myEndReached = res.content.isEmpty() ||
+                (res.totalPageCount > 0 && myPage + 1 >= res.totalPageCount)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -192,8 +206,16 @@ fun CollectionsScreen(
         val id = myId ?: return
         if (myEndReached || myLoadingMore || myCollections.isEmpty()) return
         myLoadingMore = true
-        val more = runCatching { api.profileCollections(id, myPage + 1).content }
-            .getOrElse { emptyList() }
+        val result = runCatching { api.profileCollections(id, myPage + 1).content }
+        if (result.isFailure) {
+            myLoadingMore = false
+            return
+        }
+        val more = result.getOrNull().orEmpty()
+        android.util.Log.i(
+            "Pagination",
+            "Collections my page=${myPage + 1} got=${more.size} loaded=${myCollections.size}",
+        )
         if (more.isEmpty()) {
             myEndReached = true
         } else {
@@ -205,6 +227,11 @@ fun CollectionsScreen(
 
     LaunchedEffect(selected) {
         val col = selected ?: return@LaunchedEffect
+        // Сразу после сохранения показываем данные из ответа, а не перезагружаем страницу.
+        if (skipNextDetailLoad) {
+            skipNextDetailLoad = false
+            return@LaunchedEffect
+        }
         detailLoading = true
         detailError = null
         try {
@@ -227,8 +254,13 @@ fun CollectionsScreen(
     suspend fun loadMoreReleases() {
         val col = selected ?: return
         if (detailEndReached || detailLoading || releases.isEmpty()) return
-        val more = runCatching { api.collectionReleases(col.id, detailPage + 1).content }
-            .getOrElse { emptyList() }
+        val result = runCatching { api.collectionReleases(col.id, detailPage + 1).content }
+        if (result.isFailure) return
+        val more = result.getOrNull().orEmpty()
+        android.util.Log.i(
+            "Pagination",
+            "Collection releases col=${col.id} page=${detailPage + 1} got=${more.size} loaded=${releases.size}",
+        )
         if (more.isEmpty()) {
             detailEndReached = true
         } else {
@@ -269,6 +301,7 @@ fun CollectionsScreen(
                     } else {
                         listOf(saved.copy(releaseCount = savedReleases.size)) + myCollections
                     }
+                    if (selected?.id != saved.id) skipNextDetailLoad = true
                     selected = saved
                     detail = saved.copy(releaseCount = savedReleases.size)
                     releases = savedReleases
@@ -459,6 +492,11 @@ fun CollectionsScreen(
                             onOpen = { selected = it },
                             onLoadMore = { loadMoreCollections() },
                             loadingMore = loadingMore,
+                            loadMoreError = loadMoreError,
+                            onRetryLoadMore = {
+                                loadMoreError = null
+                                scope.launch { loadMoreCollections() }
+                            },
                             modifier = Modifier.fillMaxSize(),
                         )
                     }
@@ -516,6 +554,8 @@ private fun CollectionsList(
     loadingMore: Boolean,
     modifier: Modifier = Modifier,
     header: (@Composable () -> Unit)? = null,
+    loadMoreError: String? = null,
+    onRetryLoadMore: (() -> Unit)? = null,
 ) {
     val listState = rememberLazyListState()
 
@@ -548,6 +588,19 @@ private fun CollectionsList(
             item {
                 Box(Modifier.fillMaxWidth().padding(8.dp), contentAlignment = Alignment.Center) {
                     Text("Загрузка...", color = ThirdText, fontSize = 12.sp)
+                }
+            }
+        }
+        if (loadMoreError != null) {
+            item {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(loadMoreError!!, color = ThirdText, fontSize = 12.sp)
+                    if (onRetryLoadMore != null) {
+                        TextButton(onClick = onRetryLoadMore) { Text("Повторить") }
+                    }
                 }
             }
         }

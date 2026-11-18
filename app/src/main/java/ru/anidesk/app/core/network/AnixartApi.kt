@@ -3,8 +3,10 @@ package ru.anidesk.app.core.network
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.okhttp.OkHttp
+import io.ktor.client.plugins.HttpRequestRetry
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.request.HttpRequest
 import io.ktor.client.request.forms.MultiPartFormDataContent
 import io.ktor.client.request.forms.formData
 import io.ktor.client.request.get
@@ -14,22 +16,48 @@ import io.ktor.client.request.setBody
 import io.ktor.http.ContentType
 import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpMethod
 import io.ktor.http.Parameters
 import io.ktor.http.contentType
 import io.ktor.http.formUrlEncode
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
+import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.Interceptor
+import okhttp3.Request
+import okhttp3.Response
+import java.io.IOException
+import java.net.ConnectException
+import java.net.NoRouteToHostException
+import java.net.UnknownHostException
+import javax.net.ssl.SSLException
 
 /**
  * Клиент API Anixart (порт anixartjs на Kotlin/Ktor).
  * Токен передаётся query-параметром `token`.
+ *
+ * Если выбранный хост не отвечает (таймаут, 5xx, обрыв соединения), запрос
+ * автоматически повторяется на резервных зеркалах. Рабочий хост запоминается
+ * через [onHostChanged], чтобы следующие запросы шли сразу на него.
  */
 class AnixartApi(
-    var baseUrl: String = "https://api-s.anixsekai.com",
+    baseUrl: String = DEFAULT_BASE_URL,
+    private val onHostChanged: ((String) -> Unit)? = null,
 ) {
+    @Volatile
+    var baseUrl: String = normalizeBaseUrl(baseUrl)
+        set(value) {
+            field = normalizeBaseUrl(value)
+        }
+
     var token: String? = null
 
     private val client = HttpClient(OkHttp) {
+        // Иначе HTTP 5xx (например, 504 от нестабильного прокси) парсится
+        // в пустой ответ и экран показывает "ничего не найдено".
+        expectSuccess = true
+
         install(ContentNegotiation) {
             json(
                 Json {
@@ -41,10 +69,42 @@ class AnixartApi(
                 }
             )
         }
-        install(HttpTimeout) {
-            requestTimeoutMillis = 30_000
-            connectTimeoutMillis = 15_000
+        install(HttpRequestRetry) {
+            maxRetries = 1
+            // Повторяем только безопасные запросы: повтор POST на создание
+            // подборки/релиза мог бы создать дубликат.
+            retryIf { request, response ->
+                response.status.value in 500..599 && request.allowsServerErrorRetry()
+            }
+            retryOnExceptionIf { _, cause ->
+                cause is ConnectException || cause is UnknownHostException || cause is NoRouteToHostException
+            }
+            exponentialDelay(base = 2.0, baseDelayMs = 500, maxDelayMs = 2_000, randomizationMs = 200)
         }
+        install(HttpTimeout) {
+            requestTimeoutMillis = 45_000
+            connectTimeoutMillis = 10_000
+            // Без явного значения OkHttp использует 10 с: прокси успевает
+            // отдать 504 только через ~15 с, и мы зря считаем это обрывом.
+            // 18 с — компромисс: 504 от прокси ещё успевает прийти, а зависший
+            // запрос не блокирует экран на полминуты.
+            socketTimeoutMillis = 18_000
+        }
+        engine {
+            addInterceptor(
+                HostFallbackInterceptor(
+                    currentBaseUrl = { baseUrl },
+                    onHostChanged = ::switchToHost,
+                )
+            )
+        }
+    }
+
+    private fun switchToHost(base: String) {
+        val normalized = normalizeBaseUrl(base)
+        if (baseUrl == normalized) return
+        baseUrl = normalized
+        onHostChanged?.invoke(normalized)
     }
 
     // ---------- Auth ----------
@@ -428,6 +488,73 @@ class AnixartApi(
 
     // ---------- Internals ----------
 
+    /**
+     * Пробует запрос на выбранном хосте, затем на резервных зеркалах.
+     *
+     * OkHttp-перехватчик, а не отдельный слой API: все методы уже строят URL
+     * от [baseUrl], поэтому достаточно подменить host в готовом запросе.
+     */
+    private class HostFallbackInterceptor(
+        private val currentBaseUrl: () -> String,
+        private val onHostChanged: (String) -> Unit,
+    ) : Interceptor {
+
+        override fun intercept(chain: Interceptor.Chain): Response {
+            val request = chain.request()
+            val requestBase = "${request.url.scheme}://${request.url.host}"
+            val targets = buildList {
+                add(requestBase)
+                add(currentBaseUrl())
+                addAll(FALLBACK_BASE_URLS)
+            }.mapNotNull { it.toHttpUrlOrNull() }
+                .distinctBy { "${it.scheme}://${it.host}:${it.port}" }
+
+            if (targets.size <= 1) return chain.proceed(request)
+
+            val oneShotBody = request.body?.isOneShot() == true
+            var lastError: IOException? = null
+
+            for ((index, target) in targets.withIndex()) {
+                if (chain.call().isCanceled()) break
+
+                val candidate = request.newBuilder()
+                    .url(
+                        request.url.newBuilder()
+                            .scheme(target.scheme)
+                            .host(target.host)
+                            .port(target.port)
+                            .build()
+                    )
+                    .build()
+
+                try {
+                    val response = chain.proceed(candidate)
+                    val retryServerError = response.code in 500..599 &&
+                        !oneShotBody &&
+                        index < targets.lastIndex &&
+                        request.allowsServerErrorRetry()
+                    if (retryServerError) {
+                        response.close()
+                        continue
+                    }
+                    if (response.isSuccessful) {
+                        val base = "${target.scheme}://${target.host}"
+                        if (base != currentBaseUrl()) onHostChanged(base)
+                    }
+                    return response
+                } catch (error: IOException) {
+                    lastError = error
+                    val canRetry = !chain.call().isCanceled() &&
+                        !oneShotBody &&
+                        index < targets.lastIndex &&
+                        request.allowsIoErrorRetry(error)
+                    if (!canRetry) throw error
+                }
+            }
+            throw lastError ?: IOException("Запрос отменён")
+        }
+    }
+
     private suspend inline fun <reified T> apiGet(path: String, params: Map<String, String> = emptyMap()): T {
         val response = client.get("$baseUrl$path") {
             header("User-Agent", USER_AGENT)
@@ -464,5 +591,54 @@ class AnixartApi(
     companion object {
         const val USER_AGENT =
             "AnixartApp/9.0 BETA 3-25021818 (Android 9; SDK 28; x86_64; ROG ASUS AI2201_B; ru)"
+
+        const val DEFAULT_BASE_URL = "https://api.anixsekai.com"
+
+        /** Зеркала API в порядке приоритета для автопереключения. */
+        private val FALLBACK_BASE_URLS = listOf(
+            DEFAULT_BASE_URL,
+            "https://api.anixart.app",
+        )
+
+        fun normalizeBaseUrl(raw: String): String {
+            val trimmed = raw.trim().trimEnd('/')
+            if (trimmed.isEmpty()) return DEFAULT_BASE_URL
+            return if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+                trimmed
+            } else {
+                "https://$trimmed"
+            }
+        }
     }
+
+    /** Освобождает сетевые ресурсы (например, после разового использования в воркере). */
+    fun close() {
+        client.close()
+    }
+}
+
+/** Повторять на резервном хосте при 5xx можно только безопасные запросы. */
+private fun Request.allowsServerErrorRetry(): Boolean = when (method) {
+    "GET", "HEAD" -> true
+    "POST" -> url.encodedPath.contains("/filter") || url.encodedPath.contains("/search")
+    else -> false
+}
+
+/**
+ * Повтор при обрыве соединения. Для POST разрешаем только ошибки, при которых
+ * запрос точно не дошёл до сервера (иначе создание подборки может продублироваться).
+ */
+private fun Request.allowsIoErrorRetry(error: IOException): Boolean = when (method) {
+    "GET", "HEAD" -> true
+    else -> error is ConnectException ||
+        error is UnknownHostException ||
+        error is NoRouteToHostException ||
+        error is SSLException
+}
+
+/** Повтор при 5xx на уровне Ktor (после того как отработал fallback по хостам). */
+private fun HttpRequest.allowsServerErrorRetry(): Boolean = when (method) {
+    HttpMethod.Get, HttpMethod.Head -> true
+    HttpMethod.Post -> url.encodedPath.contains("/filter") || url.encodedPath.contains("/search")
+    else -> false
 }

@@ -1,5 +1,6 @@
 package ru.anidesk.app.ui.screens
 
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -47,6 +48,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -89,6 +91,7 @@ fun BookmarksScreen(
     onOpenRelease: (Int) -> Unit,
     onBack: () -> Unit,
 ) {
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var tabIndex by rememberSaveable { mutableIntStateOf(0) }
     var releases by remember { mutableStateOf<List<Release>>(emptyList()) }
@@ -134,26 +137,33 @@ fun BookmarksScreen(
         val next = page + 1
         var more: List<Release> = emptyList()
         var ok = false
+        var anySuccess = false
         repeat(3) { attempt ->
             if (ok) return@repeat
-            val res = runCatching { fetchPage(tabIndex, next) }
-            res.onSuccess { list ->
+            try {
+                val list = fetchPage(tabIndex, next)
+                anySuccess = true
                 if (list.isNotEmpty()) {
                     more = list
                     ok = true
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("Bookmarks", "loadMore page=$next attempt=${attempt + 1} failed: ${e.message}")
             }
-            res.onFailure {
-                android.util.Log.e("Bookmarks", "loadMore page=$next attempt=${attempt + 1} failed: ${it.message}")
-            }
-            if (!ok) delay(1500)
+            if (!ok && attempt < 2) delay(1500)
         }
         android.util.Log.i("Bookmarks", "loadMore tab=$tabIndex page=$next got=${more.size}")
-        if (more.isEmpty()) {
-            endReached = true
-        } else {
-            releases = (releases + more).distinctBy { it.id }
-            page = next
+        when {
+            more.isNotEmpty() -> {
+                releases = (releases + more).distinctBy { it.id }
+                page = next
+            }
+            // Пустая страница после успешного запроса — действительно конец списка.
+            anySuccess -> endReached = true
+            // Все попытки упали: не помечаем список завершённым, иначе страницы теряются.
+            else -> error = "Не удалось загрузить. Проверьте соединение."
         }
         loadingMore = false
     }
@@ -293,9 +303,19 @@ fun BookmarksScreen(
                     onClick = {
                         pendingDelete = null
                         scope.launch {
-                            runCatching { api.deleteFromHistory(release.id) }
-                            releases = releases.filterNot { it.id == release.id }
-                            if (releases.isEmpty()) endReached = true
+                            try {
+                                api.deleteFromHistory(release.id)
+                                releases = releases.filterNot { it.id == release.id }
+                                if (releases.isEmpty()) endReached = true
+                            } catch (e: kotlinx.coroutines.CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                Toast.makeText(
+                                    context,
+                                    e.networkAwareMessage("Не удалось удалить из истории:"),
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            }
                         }
                     },
                 ) { Text("Удалить") }
@@ -317,10 +337,25 @@ fun BookmarksScreen(
                         pendingClear = false
                         scope.launch {
                             clearing = true
-                            releases.forEach { runCatching { api.deleteFromHistory(it.id) } }
-                            releases = emptyList()
-                            endReached = true
-                            clearing = false
+                            try {
+                                // Удаляем всю историю постранично: в памяти лежит только первая страница.
+                                var guard = 0
+                                while (guard++ < 100) {
+                                    val batch = api.history(0).content
+                                    if (batch.isEmpty()) break
+                                    batch.forEach { api.deleteFromHistory(it.id) }
+                                    if (batch.size < 20) break
+                                }
+                                releases = emptyList()
+                                page = 0
+                                endReached = true
+                            } catch (e: kotlinx.coroutines.CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                error = e.networkAwareMessage("Не удалось очистить историю:")
+                            } finally {
+                                clearing = false
+                            }
                         }
                     },
                 ) { Text("Очистить") }

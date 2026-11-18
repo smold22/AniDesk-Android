@@ -124,9 +124,14 @@ object SourceParsers {
                 .execute()
         }.getOrNull()
 
-        if (response != null && response.header("Content-Type")?.contains("application/json") == true) {
-            response.use { it.body?.string() }?.let { body ->
-                return parseKodikLinks(body)
+        if (response != null) {
+            // Всегда закрываем ответ, даже если Content-Type не JSON.
+            if (response.header("Content-Type")?.contains("application/json") == true) {
+                response.use { it.body?.string() }?.let { body ->
+                    return parseKodikLinks(body)
+                }
+            } else {
+                response.close()
             }
         }
 

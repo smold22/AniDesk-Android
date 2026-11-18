@@ -153,6 +153,7 @@ fun ReleaseScreen(
     var showNewCollection by rememberSaveable { mutableStateOf(false) }
     var myId by remember { mutableStateOf<Int?>(null) }
     var isFavorite by remember { mutableStateOf(false) }
+    var favoritesCount by remember { mutableIntStateOf(0) }
     var bookmarkType by remember { mutableIntStateOf(0) }
     var showBookmarkMenu by remember { mutableStateOf(false) }
     var relatedReleases by remember { mutableStateOf<List<Release>>(emptyList()) }
@@ -176,6 +177,7 @@ fun ReleaseScreen(
             } else {
                 release = res.release
                 isFavorite = res.release.isFavorite
+                favoritesCount = res.release.favoritesCount
                 bookmarkType = res.release.profileListStatus ?: 0
                 runCatching {
                     val rel = res.release.related
@@ -274,13 +276,23 @@ fun ReleaseScreen(
                                                 showBookmarkMenu = false
                                                 if (type == bookmarkType) return@DropdownMenuItem
                                                 scope.launch {
-                                                    if (bookmarkType != 0) {
-                                                        runCatching { api.removeFromProfileList(r.id, bookmarkType) }
+                                                    try {
+                                                        if (bookmarkType != 0) {
+                                                            api.removeFromProfileList(r.id, bookmarkType)
+                                                        }
+                                                        if (type != 0) {
+                                                            api.addToProfileList(r.id, type)
+                                                        }
+                                                        bookmarkType = type
+                                                    } catch (e: kotlinx.coroutines.CancellationException) {
+                                                        throw e
+                                                    } catch (e: Exception) {
+                                                        Toast.makeText(
+                                                            context,
+                                                            e.networkAwareMessage("Не удалось изменить закладку:"),
+                                                            Toast.LENGTH_SHORT,
+                                                        ).show()
                                                     }
-                                                    if (type != 0) {
-                                                        runCatching { api.addToProfileList(r.id, type) }
-                                                    }
-                                                    bookmarkType = type
                                                 }
                                             },
                                         )
@@ -290,12 +302,24 @@ fun ReleaseScreen(
                             Button(
                                 onClick = {
                                     scope.launch {
-                                        if (isFavorite) {
-                                            runCatching { api.removeFavorite(r.id) }
-                                            isFavorite = false
-                                        } else {
-                                            runCatching { api.addFavorite(r.id) }
-                                            isFavorite = true
+                                        try {
+                                            if (isFavorite) {
+                                                api.removeFavorite(r.id)
+                                                isFavorite = false
+                                                favoritesCount = (favoritesCount - 1).coerceAtLeast(0)
+                                            } else {
+                                                api.addFavorite(r.id)
+                                                isFavorite = true
+                                                favoritesCount += 1
+                                            }
+                                        } catch (e: kotlinx.coroutines.CancellationException) {
+                                            throw e
+                                        } catch (e: Exception) {
+                                            Toast.makeText(
+                                                context,
+                                                e.networkAwareMessage("Не удалось изменить избранное:"),
+                                                Toast.LENGTH_SHORT,
+                                            ).show()
                                         }
                                     }
                                 },
@@ -317,7 +341,7 @@ fun ReleaseScreen(
                                         tint = if (isFavorite) Carmine else MainText,
                                         modifier = Modifier.size(18.dp),
                                     )
-                                    Text(r.favoritesCount.toString())
+                                    Text(favoritesCount.toString())
                                 }
                             }
                         }
@@ -349,6 +373,10 @@ fun ReleaseScreen(
                                     runCatching {
                                         api.relatedReleases(rel.id, relatedPage + 2)
                                     }.onSuccess { res ->
+                                        android.util.Log.i(
+                                            "Pagination",
+                                            "Related page=${relatedPage + 2} got=${res.content.size} loaded=${relatedReleases.size}",
+                                        )
                                         relatedReleases = relatedReleases + res.content
                                         relatedPage = res.currentPage
                                         relatedHasMore = res.currentPage + 1 < res.totalPageCount
@@ -1332,6 +1360,12 @@ private fun DownloadQualityDialog(
                         .padding(vertical = 24.dp),
                     contentAlignment = Alignment.Center,
                 ) { LoadingIndicator() }
+            } else if (opts.isEmpty()) {
+                Text(
+                    text = "Не удалось получить варианты качества",
+                    color = ThirdText,
+                    fontSize = 15.sp,
+                )
             } else {
                 Column {
                     opts.forEach { (quality, label) ->

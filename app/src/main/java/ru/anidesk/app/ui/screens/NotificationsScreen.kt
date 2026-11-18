@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -34,10 +35,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -51,13 +54,13 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import ru.anidesk.app.core.network.AnixartApi
 import ru.anidesk.app.core.notifications.EpisodeNotificationsWorker
 import ru.anidesk.app.core.notifications.NotificationHistoryStore
 import ru.anidesk.app.core.notifications.StoredNotification
+import ru.anidesk.app.core.notifications.timestampSeconds
 import ru.anidesk.app.ui.components.ErrorBox
 import ru.anidesk.app.ui.components.Format
 import ru.anidesk.app.ui.components.HeaderIconButton
@@ -66,6 +69,8 @@ import ru.anidesk.app.ui.theme.Carmine
 import ru.anidesk.app.ui.theme.MainText
 import ru.anidesk.app.ui.theme.SecondaryText
 import ru.anidesk.app.ui.theme.ThirdText
+
+private const val NOTIFICATION_PAGES_LIMIT = 20
 
 private enum class NotifFilter(val title: String) {
     ALL("Все"),
@@ -87,69 +92,106 @@ fun NotificationsScreen(
     var selectedFilter by remember { mutableStateOf(NotifFilter.ALL) }
     var refreshing by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var page by remember { mutableIntStateOf(0) }
+    var endReached by remember { mutableStateOf(false) }
+    var loadingMore by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+
+    /** [apiPage] — 0-индексированная страница API; публичные методы принимают страницу с 1. */
+    suspend fun fetchPage(apiPage: Int): List<StoredNotification> {
+        val epResult = runCatching { api.notificationEpisodes(apiPage + 1) }
+        val rrResult = runCatching { api.notificationRelatedReleases(apiPage + 1) }
+        val epRes = epResult.getOrNull()
+        val rrRes = rrResult.getOrNull()
+        if (epRes == null && rrRes == null) {
+            throw (epResult.exceptionOrNull() ?: rrResult.exceptionOrNull()!!)
+        }
+
+        val result = mutableListOf<StoredNotification>()
+        epRes?.content?.forEach { n ->
+            val ep = n.episode
+            val rel = ep?.release
+            val title = rel?.titleRu?.ifBlank { rel.title } ?: "Новая серия"
+            val releaseId = (ep?.releaseId ?: 0L).takeIf { it > 0L }?.toInt() ?: rel?.id ?: 0
+            val epLabel = ep?.name?.ifBlank { ep.position.takeIf { p -> p > 0 }?.toString() }.orEmpty()
+            val ts = timestampSeconds(if (n.timestamp > 0) n.timestamp else System.currentTimeMillis())
+            result += StoredNotification(
+                key = if (n.id > 0) "ep:${n.id}" else "ep:x:$releaseId:$epLabel:${n.timestamp}",
+                type = EpisodeNotificationsWorker.TYPE_EPISODE,
+                title = title,
+                episodeName = epLabel.ifBlank { null },
+                releaseId = releaseId,
+                image = rel?.image ?: rel?.poster,
+                timestamp = ts,
+                isNew = n.isNew,
+            )
+        }
+        rrRes?.content?.forEach { n ->
+            val rel = n.release
+            val releaseId = rel?.id ?: 0
+            val title = rel?.titleRu?.ifBlank { rel.title } ?: "Связанный релиз"
+            val ts = timestampSeconds(if (n.timestamp > 0) n.timestamp else System.currentTimeMillis())
+            val fallbackKey = listOfNotNull(
+                releaseId.takeIf { it > 0 }?.toString(),
+                n.timestamp.takeIf { it > 0 }?.toString(),
+            ).joinToString(":")
+            result += StoredNotification(
+                key = if (n.id > 0) "rr:${n.id}" else "rr:x:$fallbackKey",
+                type = EpisodeNotificationsWorker.TYPE_RELEASE,
+                title = title,
+                episodeName = null,
+                releaseId = releaseId,
+                image = rel?.image ?: rel?.poster,
+                timestamp = ts,
+                isNew = n.isNew,
+            )
+        }
+        return result
+    }
 
     suspend fun syncFromApi() {
         error = null
+        page = 0
+        endReached = false
         try {
-            val toStore = coroutineScope {
-                suspend fun <T> fetch(block: suspend () -> List<T>): List<T> =
-                    runCatching { block() }.getOrDefault(emptyList())
-
-                val epDeferred = async { fetch { api.notificationEpisodes(1).content } }
-                val rrDeferred = async { fetch { api.notificationRelatedReleases(1).content } }
-                val epList = epDeferred.await()
-                val rrList = rrDeferred.await()
-
-                val result = mutableListOf<StoredNotification>()
-
-                epList.forEach { n ->
-                    val ep = n.episode
-                    val rel = ep?.release
-                    val title = rel?.titleRu?.ifBlank { rel.title } ?: "Новая серия"
-                    val releaseId = (ep?.releaseId ?: 0L).takeIf { it > 0L }?.toInt() ?: rel?.id ?: 0
-                    val epLabel = ep?.name?.ifBlank { ep.position.takeIf { p -> p > 0 }?.toString() }.orEmpty()
-                    val ts = if (n.timestamp > 0) n.timestamp else System.currentTimeMillis()
-                    result += StoredNotification(
-                        key = "ep:${if (n.id > 0) n.id else "$releaseId:$epLabel:$ts"}",
-                        type = EpisodeNotificationsWorker.TYPE_EPISODE,
-                        title = title,
-                        episodeName = epLabel.ifBlank { null },
-                        releaseId = releaseId,
-                        image = rel?.image ?: rel?.poster,
-                        timestamp = ts,
-                        isNew = n.isNew,
-                    )
-                }
-
-                rrList.forEach { n ->
-                    val rel = n.release
-                    val releaseId = rel?.id ?: 0
-                    val title = rel?.titleRu?.ifBlank { rel.title } ?: "Связанный релиз"
-                    val ts = if (n.timestamp > 0) n.timestamp else System.currentTimeMillis()
-                    result += StoredNotification(
-                        key = "rr:${if (n.id > 0) n.id else "$releaseId:$ts"}",
-                        type = EpisodeNotificationsWorker.TYPE_RELEASE,
-                        title = title,
-                        episodeName = null,
-                        releaseId = releaseId,
-                        image = rel?.image ?: rel?.poster,
-                        timestamp = ts,
-                        isNew = n.isNew,
-                    )
-                }
-                result
-            }
-
+            val toStore = fetchPage(page)
+            android.util.Log.i("Pagination", "Notifications refresh page=$page got=${toStore.size}")
             historyStore.upsertAll(toStore)
+            if (toStore.isEmpty()) endReached = true
+            // Локально считаем прочитанным для бейджа. Серверный readNotifications
+            // здесь не вызываем: иначе воркер потеряет isNew и не покажет пуш.
             historyStore.markAllRead()
-            runCatching { api.readNotifications() }
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
             error = e.networkAwareMessage("Не удалось загрузить:")
         } finally {
             refreshing = false
+        }
+    }
+
+    suspend fun loadMore() {
+        if (endReached || loadingMore || refreshing || page + 1 >= NOTIFICATION_PAGES_LIMIT) return
+        loadingMore = true
+        try {
+            val next = page + 1
+            val more = fetchPage(next)
+            android.util.Log.i(
+                "Pagination",
+                "Notifications loadMore page=$next got=${more.size} totalLoaded=${storedNotifications.size}",
+            )
+            if (more.isEmpty()) {
+                endReached = true
+            } else {
+                historyStore.upsertAll(more)
+                page = next
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            error = e.networkAwareMessage("Не удалось загрузить:")
+        } finally {
+            loadingMore = false
         }
     }
 
@@ -163,6 +205,17 @@ fun NotificationsScreen(
             NotifFilter.ALL -> storedNotifications
             NotifFilter.EPISODES -> storedNotifications.filter { it.type == EpisodeNotificationsWorker.TYPE_EPISODE }
             NotifFilter.RELEASES -> storedNotifications.filter { it.type == EpisodeNotificationsWorker.TYPE_RELEASE }
+        }
+    }
+
+    val listState = rememberLazyListState()
+    LaunchedEffect(listState, filteredList.size) {
+        snapshotFlow {
+            val info = listState.layoutInfo
+            val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: 0
+            lastVisible >= info.totalItemsCount - 3
+        }.distinctUntilChanged().collect { nearEnd ->
+            if (nearEnd) loadMore()
         }
     }
 
@@ -273,6 +326,7 @@ fun NotificationsScreen(
                     )
                 }
                 else -> LazyColumn(
+                    state = listState,
                     modifier = Modifier.fillMaxSize(),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(
@@ -382,7 +436,7 @@ private fun StoredNotificationCard(
 
             if (item.timestamp > 0) {
                 Text(
-                    text = Format.getHistoryTime(item.timestamp),
+                    text = Format.getHistoryTime(timestampSeconds(item.timestamp)),
                     fontSize = 12.sp,
                     color = SecondaryText,
                     modifier = Modifier.padding(top = 4.dp),

@@ -74,6 +74,7 @@ fun SearchScreen(
     LaunchedEffect(query, filter) {
         val q = query.trim()
         val filterActive = !filter.isEmpty
+        error = null
         if (q.length < 2 && !filterActive) {
             results = emptyList()
             searched = false
@@ -192,7 +193,7 @@ fun SearchScreen(
         when {
             loading -> LoadingIndicator()
             error != null -> ErrorBox(error!!)
-            query.trim().length < 2 -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            query.trim().length < 2 && filter.isEmpty -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text("Введите минимум 2 символа", color = ThirdText, fontSize = 14.sp)
             }
             results.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -208,33 +209,48 @@ fun SearchScreen(
                         if (!endReached && !loadingMore && results.isNotEmpty()) {
                             loadingMore = true
                             val next = page + 1
-                            runCatching {
-                                if (query.trim().isNotEmpty()) {
-                                    api.searchReleases(next, query.trim())
-                                } else {
-                                    api.filterReleases(
-                                        page = next,
-                                        sort = filter.sort,
-                                        statusId = filter.statusId,
-                                        categoryId = filter.categoryId,
-                                        country = filter.country,
-                                        startYear = filter.startYear,
-                                        endYear = filter.endYear,
-                                        season = filter.season,
-                                        genres = filter.genres,
-                                        types = filter.types,
-                                        ageRatings = filter.ageRatings,
-                                    ).content
+                            var more: List<Release>? = null
+                            repeat(3) { attempt ->
+                                if (more != null) return@repeat
+                                runCatching {
+                                    if (query.trim().isNotEmpty()) {
+                                        api.searchReleases(next, query.trim())
+                                    } else {
+                                        api.filterReleases(
+                                            page = next,
+                                            sort = filter.sort,
+                                            statusId = filter.statusId,
+                                            categoryId = filter.categoryId,
+                                            country = filter.country,
+                                            startYear = filter.startYear,
+                                            endYear = filter.endYear,
+                                            season = filter.season,
+                                            genres = filter.genres,
+                                            types = filter.types,
+                                            ageRatings = filter.ageRatings,
+                                        ).content
+                                    }
+                                }.onSuccess { more = it }
+                                    .onFailure { e ->
+                                        android.util.Log.w(
+                                            "Pagination",
+                                            "Search page=$next attempt=${attempt + 1} failed: ${e.message}",
+                                        )
+                                        if (attempt < 2) delay(1200)
+                                    }
+                            }
+                            android.util.Log.i(
+                                "Pagination",
+                                "Search page=$next got=${more?.size ?: -1} loaded=${results.size}",
+                            )
+                            when {
+                                more == null -> Unit
+                                more!!.isEmpty() -> endReached = true
+                                else -> {
+                                    results = (results + more!!).distinctBy { it.id }
+                                    page = next
                                 }
                             }
-                                .onSuccess { more ->
-                                    if (more.isEmpty()) {
-                                        endReached = true
-                                    } else {
-                                        results = (results + more).distinctBy { it.id }
-                                        page = next
-                                    }
-                                }
                             loadingMore = false
                         }
                     },

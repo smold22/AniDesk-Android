@@ -30,6 +30,16 @@ data class StoredNotification(
     val isNew: Boolean = false,
 )
 
+/**
+ * Приводит timestamp к секундам. Сервер и локальные пуши отдают разные единицы,
+ * а форматирование дат в UI рассчитано на секунды.
+ */
+internal fun timestampSeconds(value: Long): Long = when {
+    value <= 0L -> 0L
+    value >= 100_000_000_000L -> value / 1000
+    else -> value
+}
+
 class NotificationHistoryStore(private val context: Context) {
 
     private val ITEMS = stringPreferencesKey("items")
@@ -37,7 +47,10 @@ class NotificationHistoryStore(private val context: Context) {
 
     val notifications: Flow<List<StoredNotification>> =
         context.notificationHistoryDataStore.data.map { prefs ->
-            decode(prefs[ITEMS]).sortedByDescending { it.timestamp }
+            // Старые записи могли сохраниться в миллисекундах — нормализуем при чтении.
+            decode(prefs[ITEMS])
+                .map { it.copy(timestamp = timestampSeconds(it.timestamp)) }
+                .sortedByDescending { it.timestamp }
         }
 
     suspend fun getAll(): List<StoredNotification> = notifications.first()

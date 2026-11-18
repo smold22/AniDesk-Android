@@ -47,10 +47,13 @@ object TsRemuxer {
             muxer = Mp4Muxer.Builder(FileOutputStream(output))
                 .setAnnexBToAvccConverter(AnnexBToAvccConverter.DEFAULT)
                 .build()
-            val trackOutput = MuxerTrackOutput(muxer)
+            val mp4Muxer = muxer ?: return null
+            // Каждому треку нужен свой TrackOutput: общий писал бы аудио и видео в один трек.
+            val trackOutputs = mutableMapOf<Int, TrackOutput>()
             val extractor = TsExtractor()
             extractor.init(object : ExtractorOutput {
-                override fun track(id: Int, type: Int): TrackOutput = trackOutput
+                override fun track(id: Int, type: Int): TrackOutput =
+                    trackOutputs.getOrPut(id) { MuxerTrackOutput(mp4Muxer) }
                 override fun endTracks() {}
                 override fun seekMap(seekMap: SeekMap) {}
             })

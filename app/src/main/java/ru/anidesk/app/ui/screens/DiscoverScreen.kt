@@ -33,6 +33,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import ru.anidesk.app.core.network.AnixartApi
 import ru.anidesk.app.core.network.Release
@@ -90,9 +91,25 @@ fun DiscoverScreen(
         if (ended || current.isEmpty() || isLoading) return
         onLoading(true)
         val next = currentPage + 1
-        val more = runCatching { fetch(next) }.getOrNull()
+        var more: List<Release>? = null
+        repeat(3) { attempt ->
+            if (more != null) return@repeat
+            runCatching { fetch(next) }
+                .onSuccess { more = it }
+                .onFailure { e ->
+                    android.util.Log.w(
+                        "Pagination",
+                        "Discover next=$next attempt=${attempt + 1} failed: ${e.message}",
+                    )
+                    if (attempt < 2) delay(1200)
+                }
+        }
+        android.util.Log.i(
+            "Pagination",
+            "Discover next=$next got=${more?.size ?: -1} loaded=${current.size}",
+        )
         if (more != null) {
-            onSuccess((current + more).distinctBy { it.id }, next, more.isEmpty())
+            onSuccess((current + more!!).distinctBy { it.id }, next, more!!.isEmpty())
         }
         onLoading(false)
     }

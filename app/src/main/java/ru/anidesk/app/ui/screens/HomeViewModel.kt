@@ -5,12 +5,14 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import ru.anidesk.app.AniDeskApplication
+import ru.anidesk.app.core.network.PageableResponse
 import ru.anidesk.app.core.network.Release
 
 internal sealed interface HomeTab {
@@ -62,6 +64,7 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
     val state: StateFlow<HomeUiState> = _state.asStateFlow()
 
     private var loadJob: Job? = null
+    private var loadMoreJob: Job? = null
 
     init {
         loadTab(0)
@@ -80,30 +83,52 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
     fun loadNextPage() {
         val current = _state.value
         if (current.loading || current.loadingMore || current.endReached || current.releases.isEmpty()) return
+        if (loadMoreJob?.isActive == true) return
         val tab = HOME_TABS.getOrNull(current.tabIndex) as? HomeTab.Filter ?: return
+        val tabIndex = current.tabIndex
         val next = current.page + 1
         _state.update { it.copy(loadingMore = true) }
-        viewModelScope.launch {
-            try {
-                val res = api.filterReleases(
-                    page = next,
-                    sort = tab.sort,
-                    statusId = tab.statusId,
-                    categoryId = tab.categoryId,
-                    country = tab.country,
-                )
-                _state.update {
-                    it.copy(
-                        releases = (it.releases + res.content).distinctBy { release -> release.id },
+        loadMoreJob = viewModelScope.launch {
+            var pageResult: PageableResponse<Release>? = null
+            repeat(3) { attempt ->
+                if (pageResult != null) return@repeat
+                try {
+                    pageResult = api.filterReleases(
+                        page = next,
+                        sort = tab.sort,
+                        statusId = tab.statusId,
+                        categoryId = tab.categoryId,
+                        country = tab.country,
+                    )
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    android.util.Log.w(
+                        "Pagination",
+                        "Home tab=$tabIndex page=$next attempt=${attempt + 1} failed: ${e.message}",
+                    )
+                    if (attempt < 2) delay(1200)
+                }
+            }
+            val res = pageResult
+            if (res == null) {
+                android.util.Log.w("Pagination", "Home tab=$tabIndex page=$next failed after 3 attempts")
+                _state.update { if (it.tabIndex == tabIndex) it.copy(loadingMore = false) else it }
+                return@launch
+            }
+            android.util.Log.i("Pagination", "Home tab=$tabIndex page=$next got=${res.content.size}")
+            // Пока грузилась страница, пользователь мог переключить вкладку — не смешиваем списки.
+            _state.update { state ->
+                if (state.tabIndex != tabIndex) {
+                    state
+                } else {
+                    state.copy(
+                        releases = (state.releases + res.content).distinctBy { release -> release.id },
                         page = next,
                         endReached = res.content.isEmpty(),
                         loadingMore = false,
                     )
                 }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                _state.update { it.copy(loadingMore = false) }
             }
         }
     }
@@ -144,9 +169,12 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
     private fun loadTab(index: Int) {
         val tab = HOME_TABS.getOrNull(index) ?: return
         loadJob?.cancel()
+        loadMoreJob?.cancel()
+        loadMoreJob = null
         _state.update {
             it.copy(
                 loading = true,
+                loadingMore = false,
                 error = null,
                 releases = emptyList(),
                 page = 0,
