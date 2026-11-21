@@ -3,6 +3,7 @@ package ru.anidesk.app.ui.screens
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.app.AlarmManager
 import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
@@ -150,6 +151,7 @@ private fun SettingsMain(
     var theme by remember { mutableIntStateOf(0) }
     var showThemeDialog by remember { mutableStateOf(false) }
     var newEpisodesEnabled by remember { mutableStateOf(true) }
+    var exactAlarmsNeeded by remember { mutableStateOf(false) }
     val version = remember {
         ru.anidesk.app.BuildConfig.VERSION_NAME
     }
@@ -157,6 +159,9 @@ private fun SettingsMain(
     LaunchedEffect(Unit) {
         theme = settingsStore.theme.first()
         newEpisodesEnabled = settingsStore.newEpisodesEnabled.first()
+        val alarmManager = appContext.getSystemService(AlarmManager::class.java)
+        exactAlarmsNeeded =
+            Build.VERSION.SDK_INT >= 31 && alarmManager?.canScheduleExactAlarms() == false
     }
 
     Column(
@@ -217,9 +222,28 @@ private fun SettingsMain(
                     )
                 },
             )
+            if (exactAlarmsNeeded) {
+                SettingsRow(
+                    icon = Icons.Filled.Update,
+                    title = "Точные будильники",
+                    summary = "Разрешите точные будильники, чтобы уведомления приходили в фоне",
+                    onClick = {
+                        runCatching {
+                            appContext.startActivity(
+                                Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
+                                    data = Uri.parse("package:${appContext.packageName}")
+                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                }
+                            )
+                        }.onSuccess { exactAlarmsNeeded = false }
+                    },
+                )
+                SettingsDivider()
+            }
             SettingsRow(
                 icon = Icons.Filled.BatteryAlert,
                 title = "Оптимизация батареи",
+                summary = "Разрешите автозапуск и фоновую работу, иначе уведомления могут не приходить",
                 onClick = { openAppDetailsSettings(appContext) },
             )
             SettingsDivider()

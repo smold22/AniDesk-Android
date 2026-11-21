@@ -1,6 +1,7 @@
 package ru.anidesk.app.core.notifications
 
 import android.Manifest
+import android.app.AlarmManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -28,9 +29,12 @@ object Notifications {
     private const val TAG = "Notifications"
 
     const val CHANNEL_NEW_EPISODES = "anidesk_notifications"
+    const val ACTION_CHECK_NOTIFICATIONS = "ru.anidesk.app.ACTION_CHECK_NOTIFICATIONS"
     const val EXTRA_RELEASE_ID = MainActivity.EXTRA_RELEASE_ID
     private const val WORK_NEW_EPISODES = "episode_notifications"
     private const val WORK_NEW_EPISODES_IMMEDIATE = "episode_notifications_immediate"
+    private const val ALARM_REQUEST_CODE = 42
+    private const val CHECK_INTERVAL_MINUTES = 30L
 
     fun ensureChannel(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -51,6 +55,7 @@ object Notifications {
     /** Планирует периодическую проверку уведомлений (мин. интервал 15 мин, используем 30). */
     fun schedule(context: Context) {
         ensureChannel(context)
+        scheduleAlarm(context)
         val request = PeriodicWorkRequestBuilder<EpisodeNotificationsWorker>(
             30, TimeUnit.MINUTES,
         ).setConstraints(
@@ -64,6 +69,46 @@ object Notifications {
 
     fun cancel(context: Context) {
         WorkManager.getInstance(context).cancelUniqueWork(WORK_NEW_EPISODES)
+        cancelAlarm(context)
+        WorkManager.getInstance(context).cancelUniqueWork(WORK_NEW_EPISODES_IMMEDIATE)
+    }
+
+    /**
+     * Резервный тик через AlarmManager: переживает выгрузку процесса и Doze
+     * на оболочках, убивающих WorkManager (HiOS, MIUI и т.п.).
+     */
+    fun scheduleAlarm(context: Context) {
+        val alarmManager = context.getSystemService(AlarmManager::class.java) ?: return
+        val triggerAt = System.currentTimeMillis() + TimeUnit.MINUTES.toMillis(CHECK_INTERVAL_MINUTES)
+        val pi = alarmPendingIntent(context)
+        try {
+            val exactAllowed = Build.VERSION.SDK_INT < 31 || alarmManager.canScheduleExactAlarms()
+            if (exactAllowed) {
+                alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pi)
+            } else {
+                alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pi)
+            }
+        } catch (e: SecurityException) {
+            // Разрешение отозвано между canScheduleExactAlarms() и setExact() — ставим неточный.
+            Log.w(TAG, "exact alarm denied, falling back to inexact", e)
+            alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pi)
+        }
+    }
+
+    fun cancelAlarm(context: Context) {
+        context.getSystemService(AlarmManager::class.java)?.cancel(alarmPendingIntent(context))
+    }
+
+    private fun alarmPendingIntent(context: Context): PendingIntent {
+        val intent = Intent(context, NotificationsAlarmReceiver::class.java).apply {
+            action = ACTION_CHECK_NOTIFICATIONS
+        }
+        return PendingIntent.getBroadcast(
+            context,
+            ALARM_REQUEST_CODE,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
     }
 
     /** Одноразовая немедленная проверка уведомлений (не мешает периодической). */
